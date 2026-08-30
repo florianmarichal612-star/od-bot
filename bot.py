@@ -1,12 +1,6 @@
 """
 Telegram-бот для автоматической сборки еженедельного отчёта ОД
 Сеть «Хачапури Марико»
-
-Логика:
-  Пятница 09:00 → бот рассылает форму команде (РШ, КМ, маркетолог)
-  Пятница 16:00 → бот собирает KPI из iiko + задачи из Bitrix24
-  Пятница 16:30 → бот пишет ОД: «Добавь итоговый комментарий»
-  ОД отвечает   → бот генерирует отчёт через Claude и отправляет директору
 """
 
 import os
@@ -25,23 +19,20 @@ import anthropic
 # ─────────────────────────────────────────────
 # НАСТРОЙКИ (берутся из переменных окружения)
 # ─────────────────────────────────────────────
-TELEGRAM_TOKEN     = os.environ["TELEGRAM_TOKEN"]        # токен бота от @BotFather
-ANTHROPIC_API_KEY  = os.environ["ANTHROPIC_API_KEY"]     # ключ Claude API
+# Используем .get() чтобы бот не падал, если переменная случайно удалится
+TELEGRAM_TOKEN     = os.environ.get("TELEGRAM_TOKEN", "")
+ANTHROPIC_API_KEY  = os.environ.get("ANTHROPIC_API_KEY", "")
 
-# ID телеграм-аккаунтов (узнать через @userinfobot)
-OD_CHAT_ID         = int(os.environ["OD_CHAT_ID"])       # операционный директор
-DIRECTOR_CHAT_ID   = int(os.environ["DIRECTOR_CHAT_ID"]) # директор по развитию
+OD_CHAT_ID         = int(os.environ.get("OD_CHAT_ID", "0"))
+DIRECTOR_CHAT_ID   = int(os.environ.get("DIRECTOR_CHAT_ID", "0"))
 
-# Bitrix24
-BITRIX_WEBHOOK     = os.environ["BITRIX_WEBHOOK"]        # https://yourcompany.bitrix24.ru/rest/1/xxxxx/
-BITRIX_OD_USER_ID  = os.environ.get("BITRIX_OD_USER_ID", "1")  # ID пользователя ОД в Bitrix24
+BITRIX_WEBHOOK     = os.environ.get("BITRIX_WEBHOOK", "")
+BITRIX_OD_USER_ID  = os.environ.get("BITRIX_OD_USER_ID", "1")
 
-# iiko облако
-IIKO_LOGIN         = os.environ["IIKO_LOGIN"]            # логин в iiko.biz
-IIKO_PASSWORD      = os.environ["IIKO_PASSWORD"]         # пароль
-IIKO_ORG_IDS       = os.environ["IIKO_ORG_IDS"]         # ID организаций через запятую
+IIKO_LOGIN         = os.environ.get("IIKO_LOGIN", "")
+IIKO_PASSWORD      = os.environ.get("IIKO_PASSWORD", "")
+IIKO_ORG_IDS       = os.environ.get("IIKO_ORG_IDS", "")
 
-# Telegram ID членов команды (опционально — если не заданы, бот пропускает рассылку)
 TEAM_IDS = {
     "РШ (региональный шеф)":  int(os.environ.get("RSH_CHAT_ID",  "0")),
     "Клиент-менеджер":         int(os.environ.get("KM_CHAT_ID",   "0")),
@@ -52,10 +43,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────
-# ХРАНИЛИЩЕ СОСТОЯНИЯ (в памяти, достаточно для MVP)
+# ХРАНИЛИЩЕ СОСТОЯНИЯ 
 # ─────────────────────────────────────────────
 state = {
-    "team_reports": {},   # role → text
+    "team_reports": {},
     "od_comment": "",
     "waiting_od_comment": False,
     "iiko_data": [],
@@ -67,7 +58,6 @@ state = {
 # IIKO — получение KPI
 # ─────────────────────────────────────────────
 async def fetch_iiko_kpi() -> list[dict]:
-    """Возвращает список точек с показателями за текущую неделю."""
     try:
         org_ids = [x.strip() for x in IIKO_ORG_IDS.split(",") if x.strip()]
         today = datetime.now()
@@ -76,10 +66,10 @@ async def fetch_iiko_kpi() -> list[dict]:
         date_to   = today.strftime("%Y-%m-%d")
 
         async with httpx.AsyncClient(timeout=20) as client:
-            # 1. Получаем токен сессии
-            auth = await client.get(
+            # ИСПРАВЛЕНИЕ: POST-запрос с apiLogin
+            auth = await client.post(
                 "https://api-ru.iiko.services/api/1/access_token",
-                params={"login": IIKO_LOGIN, "pass": IIKO_PASSWORD}
+                json={"apiLogin": IIKO_LOGIN}
             )
             token = auth.json().get("token", "")
             if not token:
@@ -90,7 +80,6 @@ async def fetch_iiko_kpi() -> list[dict]:
             results = []
 
             for org_id in org_ids:
-                # 2. Запрашиваем выручку
                 r = await client.post(
                     "https://api-ru.iiko.services/api/1/reports/olap",
                     headers=headers,
@@ -128,7 +117,7 @@ async def fetch_iiko_kpi() -> list[dict]:
                         "revenue":   f"{int(revenue):,} ₽".replace(",", " "),
                         "guests":    str(guests),
                         "avg_check": f"{int(avg_check)} ₽",
-                        "margin":    "—",   # наценка в iiko требует отдельного отчёта
+                        "margin":    "—",
                     })
 
             return results
@@ -142,7 +131,6 @@ async def fetch_iiko_kpi() -> list[dict]:
 # BITRIX24 — получение задач ОД за неделю
 # ─────────────────────────────────────────────
 async def fetch_bitrix_tasks() -> list[dict]:
-    """Возвращает задачи ОД за текущую неделю."""
     try:
         today   = datetime.now()
         monday  = today - timedelta(days=today.weekday())
@@ -150,19 +138,22 @@ async def fetch_bitrix_tasks() -> list[dict]:
 
         async with httpx.AsyncClient(timeout=20) as client:
             all_tasks = {}
-            # Bitrix24 не поддерживает OR — делаем отдельные запросы по каждой роли
             for filter_key in ["RESPONSIBLE_ID", "CREATED_BY", "ACCOMPLICE"]:
+                # ИСПРАВЛЕНИЕ: Добавлен фильтр по дате создания
                 r = await client.post(
                     f"{BITRIX_WEBHOOK.rstrip('/')}/tasks.task.list",
                     json={
-                        "filter": {filter_key: BITRIX_OD_USER_ID},
+                        "filter": {
+                            filter_key: BITRIX_OD_USER_ID,
+                            ">=CREATED_DATE": date_from
+                        },
                         "select": ["ID", "TITLE", "STATUS", "DEADLINE"],
                         "order":  {"DEADLINE": "ASC"},
                     }
                 )
                 data = r.json()
                 for t in data.get("result", {}).get("tasks", []):
-                    all_tasks[t["id"]] = t  # дедупликация по ID
+                    all_tasks[t["id"]] = t  
             tasks = list(all_tasks.values())
             log.info(f"Tasks found: {len(tasks)}")
 
@@ -199,8 +190,6 @@ async def fetch_bitrix_tasks() -> list[dict]:
 # CLAUDE — генерация отчёта
 # ─────────────────────────────────────────────
 async def generate_report_text() -> tuple[str, str]:
-    """Возвращает (полный_отчёт, краткий_для_мессенджера)."""
-
     iiko  = state["iiko_data"]
     tasks = state["bitrix_tasks"]
     team  = state["team_reports"]
@@ -251,9 +240,10 @@ KPI ПАРТНЁРОВ (из iiko):
 Оберни краткую версию для Telegram в [SHORT]...[/SHORT]
 Краткая версия — максимум 25 строк, с эмодзи-маркерами."""
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+    # ИСПРАВЛЕНИЕ: Асинхронный вызов актуальной модели
+    client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+    message = await client.messages.create(
+        model="claude-3-5-sonnet-20240620",
         max_tokens=2000,
         messages=[{"role": "user", "content": prompt}]
     )
@@ -269,10 +259,9 @@ KPI ПАРТНЁРОВ (из iiko):
 
 
 # ─────────────────────────────────────────────
-# РАСПИСАНИЕ — пятничные задачи
+# РАСПИСАНИЕ И ЛОГИКА TELEGRAM
 # ─────────────────────────────────────────────
 async def job_collect_team(app: Application):
-    """09:00 пятницы — рассылаем форму команде."""
     for role, chat_id in TEAM_IDS.items():
         if chat_id == 0:
             continue
@@ -293,9 +282,7 @@ async def job_collect_team(app: Application):
         except Exception as e:
             log.error(f"Не удалось написать {role}: {e}")
 
-
 async def job_collect_kpi_and_notify_od(app: Application):
-    """16:00 пятницы — собираем iiko + Bitrix24, пишем ОД."""
     log.info("Сбор данных из iiko и Bitrix24...")
     state["iiko_data"]    = await fetch_iiko_kpi()
     state["bitrix_tasks"] = await fetch_bitrix_tasks()
@@ -324,10 +311,6 @@ async def job_collect_kpi_and_notify_od(app: Application):
     )
     state["waiting_od_comment"] = False
 
-
-# ─────────────────────────────────────────────
-# ОБРАБОТЧИКИ TELEGRAM
-# ─────────────────────────────────────────────
 async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -356,7 +339,6 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
         await query.edit_message_text("✅ Отчёт отправлен директору по развитию.")
-        # Сброс состояния
         state["team_reports"] = {}
         state["od_comment"] = ""
 
@@ -367,12 +349,10 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
-
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_chat.id
     text = update.message.text or (update.message.voice and "[голосовое сообщение]") or ""
 
-    # Сообщение от члена команды
     for role, chat_id in TEAM_IDS.items():
         if chat_id != 0 and user_id == chat_id:
             state["team_reports"][role] = text
@@ -381,7 +361,6 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-    # Комментарий от ОД
     if user_id == OD_CHAT_ID and state["waiting_od_comment"]:
         state["od_comment"] = text
         state["waiting_od_comment"] = False
@@ -389,16 +368,13 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await do_generate(ctx.application)
         return
 
-    # Неизвестное сообщение от ОД
     if user_id == OD_CHAT_ID:
         await update.message.reply_text(
             "Привет! Используй /status чтобы посмотреть статус сбора данных, "
             "или /generate чтобы сгенерировать отчёт вручную."
         )
 
-
 async def do_generate(app: Application):
-    """Генерирует отчёт и отправляет ОД на подтверждение."""
     try:
         await app.bot.send_message(OD_CHAT_ID, "⏳ Генерирую отчёт, подожди 10–15 секунд...")
         full, short = await generate_report_text()
@@ -409,7 +385,6 @@ async def do_generate(app: Application):
             InlineKeyboardButton("✏️ Добавить правки",    callback_data="edit_report"),
         ]])
 
-        # Отправляем полный отчёт (разбиваем если > 4096 символов)
         chunks = [full[i:i+4000] for i in range(0, len(full), 4000)]
         for i, chunk in enumerate(chunks):
             if i == len(chunks) - 1:
@@ -421,10 +396,6 @@ async def do_generate(app: Application):
         log.error(f"generate error: {e}")
         await app.bot.send_message(OD_CHAT_ID, f"❌ Ошибка генерации: {e}")
 
-
-# ─────────────────────────────────────────────
-# КОМАНДЫ
-# ─────────────────────────────────────────────
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 *Бот еженедельного отчёта ОД*\n\n"
@@ -440,10 +411,8 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-
 async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     team_done   = list(state["team_reports"].keys())
-    team_miss   = [r for r in TEAM_IDS if TEAM_IDS[r] != 0 and r not in state["team_reports"]]
     iiko_count  = len(state["iiko_data"])
     tasks_count = len(state["bitrix_tasks"])
 
@@ -468,7 +437,6 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text, parse_mode="Markdown")
 
-
 async def cmd_collect(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔄 Собираю данные из iiko и Bitrix24...")
     state["iiko_data"]    = await fetch_iiko_kpi()
@@ -479,7 +447,6 @@ async def cmd_collect(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"• Bitrix24: {len(state['bitrix_tasks'])} задач"
     )
 
-
 async def cmd_generate(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != OD_CHAT_ID:
         return
@@ -488,10 +455,6 @@ async def cmd_generate(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     await do_generate(ctx.application)
 
-
-# ─────────────────────────────────────────────
-# ЗАПУСК
-# ─────────────────────────────────────────────
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
@@ -502,7 +465,6 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT | filters.VOICE, handle_message))
 
-    # Расписание
     scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
     scheduler.add_job(
         lambda: asyncio.create_task(job_collect_team(app)),
@@ -517,6 +479,6 @@ def main():
     log.info("Бот запущен")
     app.run_polling(drop_pending_updates=True)
 
-
 if __name__ == "__main__":
     main()
+
