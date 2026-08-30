@@ -55,75 +55,90 @@ state = {
 
 
 # ─────────────────────────────────────────────
-# IIKO — получение KPI
+# IIKO — получение KPI через bk152 (iiko Server API)
 # ─────────────────────────────────────────────
 async def fetch_iiko_kpi() -> list[dict]:
+    import hashlib
+
     try:
-        org_ids = [x.strip() for x in IIKO_ORG_IDS.split(",") if x.strip()]
+        # IIKO_PASSWORD может быть plain или уже SHA1-хеш.
+        # Определяем автоматически: SHA1-хеш — это 40 hex-символов.
+        pw_raw = IIKO_PASSWORD.strip()
+        is_sha1 = len(pw_raw) == 40 and all(c in "0123456789abcdefABCDEF" for c in pw_raw)
+        pw_hash = pw_raw.lower() if is_sha1 else hashlib.sha1(pw_raw.encode()).hexdigest()
+
         today = datetime.now()
         monday = today - timedelta(days=today.weekday())
         date_from = monday.strftime("%Y-%m-%d")
         date_to   = today.strftime("%Y-%m-%d")
 
-        async with httpx.AsyncClient(timeout=20) as client:
-            # ИСПРАВЛЕНИЕ: POST-запрос с apiLogin
-            auth = await client.post(
-                "https://api-ru.iiko.services/api/1/access_token",
-                json={"apiLogin": IIKO_LOGIN}
+        base_url = "https://hachapuri-tetushki-mariko-co.bk152.ru"
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            # 1) Авторизация — возвращает токен plain-text'ом
+            auth = await client.get(
+                f"{base_url}/resto/api/auth",
+                params={"login": IIKO_LOGIN, "pass": pw_hash}
             )
-            token = auth.json().get("token", "")
-            if not token:
-                log.warning("iiko: не удалось получить токен")
+            token = auth.text.strip()
+            if auth.status_code != 200 or not token or len(token) > 60:
+                log.warning(f"iiko auth failed: status={auth.status_code}, body={token[:200]!r}")
                 return []
 
-            headers = {"Authorization": f"Bearer {token}"}
-            results = []
-
-            for org_id in org_ids:
-                r = await client.post(
-                    "https://api-ru.iiko.services/api/1/reports/olap",
-                    headers=headers,
-                    json={
-                        "reportType": "SALES",
-                        "buildSummary": "false",
-                        "groupByRowFields": ["Department"],
-                        "aggregateFields": [
-                            "DishSumInt", "GuestsCount", "OrdersCount"
-                        ],
-                        "filters": {
-                            "OpenDate.Typed": {
-                                "filterType": "DateRange",
-                                "periodType": "CUSTOM",
-                                "customBegin": f"{date_from}T00:00:00",
-                                "customEnd":   f"{date_to}T23:59:59",
-                            },
-                            "Organization": {
-                                "filterType": "InFilter",
-                                "values": [org_id]
-                            }
-                        },
-                        "organizationIds": [org_id]
+            # 2) OLAP-отчёт по всем точкам сети за неделю
+            headers = {"Cookie": f"key={token}"}
+            r = await client.post(
+                f"{base_url}/resto/api/v2/reports/olap",
+                headers=headers,
+                json={
+                    "reportType": "SALES",
+                    "buildSummary": "false",
+                    "groupByRowFields": ["Department"],
+                    "aggregateFields": ["DishSumInt", "GuestsCount", "OrdersCount"],
+                    "filters": {
+                        "OpenDate.Typed": {
+                            "filterType": "DateRange",
+                            "periodType": "CUSTOM",
+                            "from": f"{date_from}T00:00:00",
+                            "to":   f"{date_to}T23:59:59",
+                            "includeLow": True,
+                            "includeHigh": True,
+                        }
                     }
-                )
-                data = r.json()
-                rows = data.get("data", [])
+                }
+            )
 
-                for row in rows:
-                    revenue   = row.get("DishSumInt", 0)
-                    guests    = row.get("GuestsCount", 0)
-                    avg_check = round(revenue / guests, 0) if guests else 0
-                    results.append({
-                        "name":      row.get("Department", org_id),
-                        "revenue":   f"{int(revenue):,} ₽".replace(",", " "),
-                        "guests":    str(guests),
-                        "avg_check": f"{int(avg_check)} ₽",
-                        "margin":    "—",
-                    })
+            # Логаут, чтобы не оставлять открытых сессий
+            try:
+                await client.get(f"{base_url}/resto/api/logout", headers=headers)
+            except Exception:
+                pass
+
+            if r.status_code != 200:
+                log.warning(f"iiko OLAP failed: status={r.status_code}, body={r.text[:300]!r}")
+                return []
+
+            data = r.json()
+            rows = data.get("data", [])
+            log.info(f"iiko: получено {len(rows)} строк")
+
+            results = []
+            for row in rows:
+                revenue   = row.get("DishSumInt", 0) or 0
+                guests    = row.get("GuestsCount", 0) or 0
+                avg_check = round(revenue / guests, 0) if guests else 0
+                results.append({
+                    "name":      row.get("Department", "—"),
+                    "revenue":   f"{int(revenue):,} ₽".replace(",", " "),
+                    "guests":    str(int(guests)),
+                    "avg_check": f"{int(avg_check)} ₽",
+                    "margin":    "—",
+                })
 
             return results
 
     except Exception as e:
-        log.error(f"iiko error: {e}")
+        log.error(f"iiko error: {e}", exc_info=True)
         return []
 
 
@@ -139,7 +154,6 @@ async def fetch_bitrix_tasks() -> list[dict]:
         async with httpx.AsyncClient(timeout=20) as client:
             all_tasks = {}
             for filter_key in ["RESPONSIBLE_ID", "CREATED_BY", "ACCOMPLICE"]:
-                # ИСПРАВЛЕНИЕ: Добавлен фильтр по дате создания
                 r = await client.post(
                     f"{BITRIX_WEBHOOK.rstrip('/')}/tasks.task.list",
                     json={
@@ -151,11 +165,23 @@ async def fetch_bitrix_tasks() -> list[dict]:
                         "order":  {"DEADLINE": "ASC"},
                     }
                 )
+
+                if r.status_code != 200:
+                    log.warning(f"bitrix {filter_key}: HTTP {r.status_code}, body={r.text[:300]!r}")
+                    continue
+
                 data = r.json()
-                for t in data.get("result", {}).get("tasks", []):
-                    all_tasks[t["id"]] = t  
+                if "error" in data:
+                    log.warning(f"bitrix {filter_key}: {data.get('error')} — {data.get('error_description')}")
+                    continue
+
+                tasks = data.get("result", {}).get("tasks", [])
+                log.info(f"bitrix {filter_key}: {len(tasks)} задач")
+                for t in tasks:
+                    all_tasks[t["id"]] = t
+
             tasks = list(all_tasks.values())
-            log.info(f"Tasks found: {len(tasks)}")
+            log.info(f"bitrix: всего уникальных задач {len(tasks)}")
 
             STATUS_MAP = {
                 "1": "⏳ Ждёт выполнения",
@@ -176,13 +202,13 @@ async def fetch_bitrix_tasks() -> list[dict]:
                         pass
                 result.append({
                     "title":    t.get("title", ""),
-                    "status":   STATUS_MAP.get(t.get("status", "2"), "В работе"),
+                    "status":   STATUS_MAP.get(str(t.get("status", "2")), "В работе"),
                     "deadline": deadline,
                 })
             return result
 
     except Exception as e:
-        log.error(f"bitrix error: {e}")
+        log.error(f"bitrix error: {e}", exc_info=True)
         return []
 
 
