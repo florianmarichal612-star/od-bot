@@ -300,7 +300,17 @@ KPI по точкам (из iiko):
         max_tokens=3000,
         messages=[{"role": "user", "content": prompt}]
     )
-    text = message.content[0].text
+
+    # Claude возвращает content как список блоков (могут быть thinking + text).
+    # Собираем текст только из блоков типа "text".
+    text = "".join(
+        block.text
+        for block in (message.content or [])
+        if getattr(block, "type", None) == "text" and getattr(block, "text", None)
+    )
+    if not text:
+        log.error(f"Claude вернул пустой текст. content={message.content!r}")
+        return ("Ошибка: Claude вернул пустой ответ", "")
 
     import re
     full_match  = re.search(r"\[FULL\]([\s\S]*?)\[/FULL\]",  text)
