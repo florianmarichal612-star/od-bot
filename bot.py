@@ -19,7 +19,6 @@ import anthropic
 # ─────────────────────────────────────────────
 # НАСТРОЙКИ (берутся из переменных окружения)
 # ─────────────────────────────────────────────
-# Используем .get() чтобы бот не падал, если переменная случайно удалится
 TELEGRAM_TOKEN     = os.environ.get("TELEGRAM_TOKEN", "")
 ANTHROPIC_API_KEY  = os.environ.get("ANTHROPIC_API_KEY", "")
 
@@ -29,9 +28,8 @@ DIRECTOR_CHAT_ID   = int(os.environ.get("DIRECTOR_CHAT_ID", "0"))
 BITRIX_WEBHOOK     = os.environ.get("BITRIX_WEBHOOK", "")
 BITRIX_OD_USER_ID  = os.environ.get("BITRIX_OD_USER_ID", "1")
 
-IIKO_LOGIN         = os.environ.get("IIKO_LOGIN", "")
-IIKO_PASSWORD      = os.environ.get("IIKO_PASSWORD", "")
-IIKO_ORG_IDS       = os.environ.get("IIKO_ORG_IDS", "")
+# iiko теперь через n8n-proxy (иначе Railway IP не в whitelist bk152)
+IIKO_PROXY_URL     = os.environ.get("IIKO_PROXY_URL", "")
 
 TEAM_IDS = {
     "РШ (региональный шеф)":  int(os.environ.get("RSH_CHAT_ID",  "0")),
@@ -43,7 +41,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────
-# ХРАНИЛИЩЕ СОСТОЯНИЯ 
+# ХРАНИЛИЩЕ СОСТОЯНИЯ
 # ─────────────────────────────────────────────
 state = {
     "team_reports": {},
@@ -55,101 +53,38 @@ state = {
 
 
 # ─────────────────────────────────────────────
-# IIKO — получение KPI через bk152 (iiko Server API)
+# IIKO — получение KPI через n8n-proxy
 # ─────────────────────────────────────────────
 async def fetch_iiko_kpi() -> list[dict]:
-    import hashlib
-
+    """Идём в n8n-webhook, который сам ходит в iiko со своего IP (в whitelist).
+    Возвращает список точек с полями: name, revenue, guests, avg_check, checks, currency."""
+    if not IIKO_PROXY_URL:
+        log.warning("IIKO_PROXY_URL не задан")
+        return []
     try:
-        # IIKO_PASSWORD может быть plain или уже SHA1-хеш.
-        # Определяем автоматически: SHA1-хеш — это 40 hex-символов.
-        pw_raw = IIKO_PASSWORD.strip()
-        is_sha1 = len(pw_raw) == 40 and all(c in "0123456789abcdefABCDEF" for c in pw_raw)
-        pw_hash = pw_raw.lower() if is_sha1 else hashlib.sha1(pw_raw.encode()).hexdigest()
-
-        today = datetime.now()
-        monday = today - timedelta(days=today.weekday())
-        date_from = monday.strftime("%Y-%m-%d")
-        date_to   = today.strftime("%Y-%m-%d")
-
-        base_url = "https://hachapuri-tetushki-mariko-co.bk152.ru"
-
-        async with httpx.AsyncClient(timeout=30) as client:
-            # 1) Авторизация — возвращает токен plain-text'ом
-            auth = await client.get(
-                f"{base_url}/resto/api/auth",
-                params={"login": IIKO_LOGIN, "pass": pw_hash}
-            )
-            token = auth.text.strip()
-            if auth.status_code != 200 or not token or len(token) > 60:
-                log.warning(f"iiko auth failed: status={auth.status_code}, body={token[:200]!r}")
-                return []
-
-            # 2) OLAP-отчёт по всем точкам сети за неделю
-            headers = {"Cookie": f"key={token}"}
-            r = await client.post(
-                f"{base_url}/resto/api/v2/reports/olap",
-                headers=headers,
-                json={
-                    "reportType": "SALES",
-                    "buildSummary": "false",
-                    "groupByRowFields": ["Department"],
-                    "aggregateFields": ["DishSumInt", "GuestsCount", "OrdersCount"],
-                    "filters": {
-                        "OpenDate.Typed": {
-                            "filterType": "DateRange",
-                            "periodType": "CUSTOM",
-                            "from": f"{date_from}T00:00:00",
-                            "to":   f"{date_to}T23:59:59",
-                            "includeLow": True,
-                            "includeHigh": True,
-                        }
-                    }
-                }
-            )
-
-            # Логаут, чтобы не оставлять открытых сессий
-            try:
-                await client.get(f"{base_url}/resto/api/logout", headers=headers)
-            except Exception:
-                pass
-
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.get(IIKO_PROXY_URL)
             if r.status_code != 200:
-                log.warning(f"iiko OLAP failed: status={r.status_code}, body={r.text[:300]!r}")
+                log.warning(f"iiko proxy failed: HTTP {r.status_code}, body={r.text[:300]!r}")
                 return []
-
-            data = r.json()
-            rows = data.get("data", [])
-            log.info(f"iiko: получено {len(rows)} строк")
-
-            results = []
+            payload = r.json()
+            rows = payload.get("data", [])
+            log.info(f"iiko proxy: получено {len(rows)} точек за период {payload.get('period')}")
             for row in rows:
-                revenue   = row.get("DishSumInt", 0) or 0
-                guests    = row.get("GuestsCount", 0) or 0
-                avg_check = round(revenue / guests, 0) if guests else 0
-                results.append({
-                    "name":      row.get("Department", "—"),
-                    "revenue":   f"{int(revenue):,} ₽".replace(",", " "),
-                    "guests":    str(int(guests)),
-                    "avg_check": f"{int(avg_check)} ₽",
-                    "margin":    "—",
-                })
-
-            return results
-
+                row.setdefault("margin", "—")
+            return rows
     except Exception as e:
-        log.error(f"iiko error: {e}", exc_info=True)
+        log.error(f"iiko proxy error: {e}", exc_info=True)
         return []
 
 
 # ─────────────────────────────────────────────
-# BITRIX24 — получение задач ОД за неделю
+# BITRIX24 — задачи ОД за последние 7 дней
 # ─────────────────────────────────────────────
 async def fetch_bitrix_tasks() -> list[dict]:
     try:
         today   = datetime.now()
-        monday  = today - timedelta(days=today.weekday())
-        date_from = monday.strftime("%Y-%m-%dT00:00:00")
+        date_from = (today - timedelta(days=7)).strftime("%Y-%m-%dT00:00:00")
 
         async with httpx.AsyncClient(timeout=20) as client:
             all_tasks = {}
@@ -222,11 +157,11 @@ async def generate_report_text() -> tuple[str, str]:
     comment = state["od_comment"]
 
     period_end   = datetime.now()
-    period_start = period_end - timedelta(days=4)
-    period_str   = f"{period_start.strftime('%d')} — {period_end.strftime('%d %B %Y')}"
+    period_start = period_end - timedelta(days=7)
+    period_str   = f"{period_start.strftime('%d.%m')} — {period_end.strftime('%d.%m.%Y')}"
 
     kpi_lines = "\n".join(
-        f"  • {p['name']}: выручка {p['revenue']}, гости {p['guests']}, ср.чек {p['avg_check']}"
+        f"  • {p['name']}: выручка {p['revenue']}, гости {p['guests']}, чеков {p.get('checks','—')}, ср.чек {p['avg_check']}"
         for p in iiko
     ) or "  Данные из iiko не получены"
 
@@ -271,6 +206,8 @@ KPI по точкам (из iiko):
 • BLUF (bottom line up front): каждая секция начинается с главного вывода, потом — детали.
 • Цифры округляй до тысяч, проценты — до целого. Не пиши «примерно» или «около» — просто число.
 • Если данных нет (пустой раздел) — пиши прямо: «Отчёт от [роли] не поступил» или «Данные iiko не пришли». Не выдумывай.
+• Не строй предположений о прошлых периодах, если данных нет — пиши только про то, что видишь.
+• Валюты: точки Астана и Атырау работают в тенге (₸), остальные — в рублях (₽). При расчёте итога по сети НЕ складывай ₸ и ₽. Дай отдельно «Итого Россия» и «Итого Казахстан».
 • Проблемные точки называй по имени с конкретной цифрой и причиной, если она известна.
 • Никогда не пиши общих напутствий типа «продолжаем работать», «держим фокус», «команда молодцы».
 
@@ -280,7 +217,7 @@ KPI по точкам (из iiko):
 
 [FULL] — полная версия для архива, разделы:
 • Итог недели (2-3 предложения — самое важное)
-• KPI по сети (общая выручка, ср. чек, гости; топ-3 и антитоп-3 точки)
+• KPI по сети (отдельно РФ и Казахстан: выручка, ср. чек, гости; топ-3 и антитоп-3 точки по выручке в своей валюте)
 • Задачи (что закрыто, что просрочено, что перенесено)
 • Проблемные точки (по имени, с причиной и что делаем)
 • Отчёты команды (короткий пересказ, не копипаст)
@@ -289,7 +226,7 @@ KPI по точкам (из iiko):
 
 [SHORT] — краткая для директора в Telegram, максимум 15 строк:
 • Заголовок с периодом
-• Главная цифра недели (выручка сети + динамика, если можешь посчитать)
+• Главная цифра недели (выручка сети РФ + отдельно Казахстан)
 • 2-4 самых важных пункта с эмодзи-маркерами (📈 рост, 📉 падение, 🔴 проблема, ✅ закрыто, ⚠️ внимание)
 • Если есть запрос к директору — отдельной строкой «❓ Прошу…»
 [/SHORT]"""
@@ -301,8 +238,6 @@ KPI по точкам (из iiko):
         messages=[{"role": "user", "content": prompt}]
     )
 
-    # Claude возвращает content как список блоков (могут быть thinking + text).
-    # Собираем текст только из блоков типа "text".
     text = "".join(
         block.text
         for block in (message.content or [])
@@ -343,7 +278,7 @@ async def job_collect_team(app: Application):
                 parse_mode="Markdown"
             )
         except Exception as e:
-            log.error(f"Не удалось написать {role}: {e}")
+            log.error(f"Не удалось написать {role} (chat_id={chat_id}): {e}")
 
 async def job_collect_kpi_and_notify_od(app: Application):
     log.info("Сбор данных из iiko и Bitrix24...")
@@ -420,7 +355,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if chat_id != 0 and user_id == chat_id:
             state["team_reports"][role] = text
             await update.message.reply_text(
-                f"✅ Принято! Твой отчёт сохранён.\nОН получит всё вместе в конце дня."
+                f"✅ Принято! Твой отчёт сохранён.\nОД получит всё вместе в конце дня."
             )
             return
 
