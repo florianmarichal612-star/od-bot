@@ -8,7 +8,10 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 import httpx
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update, InlineKeyboardButton, InlineKeyboardMarkup,
+    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove,
+)
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     CallbackQueryHandler, ContextTypes, filters
@@ -38,18 +41,8 @@ IIKO_PROXY_URL     = os.environ.get("IIKO_PROXY_URL", "")
 # Переменная окружения TEAM_MEMBERS — строки, разделённые переносом строки \n.
 # Формат каждой строки:   Имя Фамилия;Роль;chat_id;bitrix_id
 # Четвёртое поле (bitrix_id) — опциональное: если задано, бот подтянет задачи
-# этого человека из Битрикса и добавит в отчёт рядом с его самоотчётом,
-# чтобы можно было сравнить самоотчёт с фактами Б24.
+# этого человека из Битрикса и добавит в отчёт рядом с его самоотчётом.
 # Пустые строки и строки, начинающиеся с #, игнорируются.
-#
-# Пример (chat_id получить: попроси каждого написать боту /myid):
-#   Панфилов Алексей;РШ;111111111;1865
-#   Савенков Александр;РШ;222222222;2393
-#   Медведева Дарья;Маркетолог;333333333;2211
-#   Салищева Алёна;Маркетолог;444444444;2229
-#   Добротворская Александра;Маркетолог;555555555;2367
-#   Проненко Эва;Клиент-менеджер;666666666;1601
-#   Данилина Юлия;Клиент-менеджер;777777777;1853
 def _parse_team_members(raw: str) -> dict[int, dict]:
     members: dict[int, dict] = {}
     for line in (raw or "").splitlines():
@@ -84,16 +77,29 @@ log.info(f"TEAM_MEMBERS: загружено {len(TEAM_MEMBERS)} человек (
 
 
 # ─────────────────────────────────────────────
+# МЕНЮ-КНОПКИ ДЛЯ ОД
+# ─────────────────────────────────────────────
+BTN_COLLECT   = "🔄 Собрать данные"
+BTN_ASK_TEAM  = "📤 Запросить отчёты"
+BTN_STATUS    = "📊 Статус"
+BTN_GENERATE  = "📝 Сгенерировать отчёт"
+
+OD_KEYBOARD = ReplyKeyboardMarkup(
+    [
+        [KeyboardButton(BTN_COLLECT), KeyboardButton(BTN_STATUS)],
+        [KeyboardButton(BTN_ASK_TEAM)],
+        [KeyboardButton(BTN_GENERATE)],
+    ],
+    resize_keyboard=True,
+    is_persistent=True,
+    input_field_placeholder="Выбери действие или напиши комментарий",
+)
+
+
+# ─────────────────────────────────────────────
 # WHITELIST — кто вообще может пользоваться ботом
 # ─────────────────────────────────────────────
 def is_authorized(user_id: int) -> bool:
-    """Разрешён ли пользователь.
-
-    ОД, директор по развитию и все участники TEAM_MEMBERS — да.
-    Все остальные — нет: бот молча их игнорирует.
-    Команда /myid — единственное публичное исключение (см. cmd_myid),
-    нужна для подключения новых людей.
-    """
     if user_id == OD_CHAT_ID or user_id == DIRECTOR_CHAT_ID:
         return True
     return user_id in TEAM_MEMBERS
@@ -118,8 +124,6 @@ state = {
 # IIKO — получение KPI через n8n-proxy
 # ─────────────────────────────────────────────
 async def fetch_iiko_kpi() -> list[dict]:
-    """Идём в n8n-webhook, который сам ходит в iiko со своего IP (в whitelist).
-    Возвращает список точек с полями: name, revenue, guests, avg_check, checks, currency."""
     if not IIKO_PROXY_URL:
         log.warning("IIKO_PROXY_URL не задан")
         return []
@@ -144,13 +148,8 @@ async def fetch_iiko_kpi() -> list[dict]:
 # BITRIX24 — задачи за последние 7 дней
 # ─────────────────────────────────────────────
 # Правильный маппинг статусов Bitrix24 REST (tasks.task.list):
-#   1 — Новая
-#   2 — Ждёт выполнения
-#   3 — Выполняется
-#   4 — Ожидает контроля (постановщика)
-#   5 — Завершена
-#   6 — Отложена
-#   7 — Отклонена
+#   1 — Новая, 2 — Ждёт выполнения, 3 — Выполняется, 4 — Ожидает контроля,
+#   5 — Завершена, 6 — Отложена, 7 — Отклонена
 # subStatus = "-3" означает ПРОСРОЧЕНА (перекрывает базовый статус)
 BITRIX_STATUS_MAP = {
     "1": ("🆕", "Новая"),
@@ -164,32 +163,30 @@ BITRIX_STATUS_MAP = {
 
 
 def _format_task_status(task_raw: dict) -> tuple[str, str, int]:
-    """Читаемый статус задачи. Возвращает (иконка, полный текст статуса, приоритет для сортировки).
-    Приоритет: 0 — просрочена, 1 — ожидает контроля, 2 — активная (ждёт/выполняется),
-    3 — отложена, 4 — завершена, 5 — отклонена. Меньше = важнее в отчёте."""
+    """Читаемый статус задачи. Возвращает (иконка, полный текст статуса, приоритет).
+    Приоритет: 0 — просрочена, 1 — ожидает контроля, 2 — активная,
+    3 — отложена, 4 — завершена, 5 — отклонена. Меньше = важнее."""
     status = str(task_raw.get("status", "2"))
     sub_status = str(task_raw.get("subStatus", status))
     label_from_api = task_raw.get("statusLabel", "")
 
-    # Просрочка перекрывает базовый статус
     if sub_status == "-3":
         return ("❌", "❌ Просрочена", 0)
 
     emoji, label = BITRIX_STATUS_MAP.get(status, ("⏳", label_from_api or f"статус {status}"))
     priority_map = {
-        "4": 1,  # ожидает контроля
-        "1": 2, "2": 2, "3": 2,  # активные
-        "6": 3,  # отложена
-        "5": 4,  # завершена
-        "7": 5,  # отклонена
+        "4": 1,
+        "1": 2, "2": 2, "3": 2,
+        "6": 3,
+        "5": 4,
+        "7": 5,
     }
     priority = priority_map.get(status, 2)
     return (emoji, f"{emoji} {label}", priority)
 
 
 async def _fetch_tasks_for_user(client: httpx.AsyncClient, user_id: str, date_from: str) -> list[dict]:
-    """Задачи одного пользователя Битрикса за период. Дедуплицируем по ID.
-    Смотрим три роли: исполнитель, автор, соисполнитель."""
+    """Задачи одного пользователя Битрикса за период. Дедуплицируем по ID."""
     if not user_id or not str(user_id).strip():
         return []
     all_tasks: dict[str, dict] = {}
@@ -202,7 +199,6 @@ async def _fetch_tasks_for_user(client: httpx.AsyncClient, user_id: str, date_fr
                         filter_key: user_id,
                         ">=CREATED_DATE": date_from
                     },
-                    # SUB_STATUS нужен, чтобы отловить просрочку (-3)
                     "select": ["ID", "TITLE", "STATUS", "SUB_STATUS", "DEADLINE"],
                     "order":  {"DEADLINE": "ASC"},
                 }
@@ -230,6 +226,7 @@ async def _fetch_tasks_for_user(client: httpx.AsyncClient, user_id: str, date_fr
                 pass
         emoji, status_text, priority = _format_task_status(t)
         result.append({
+            "id":       str(t.get("id", "")),
             "title":    t.get("title", ""),
             "status":   status_text,
             "priority": priority,
@@ -253,8 +250,7 @@ async def fetch_bitrix_tasks() -> list[dict]:
 
 
 async def fetch_team_bitrix_tasks() -> dict[int, list[dict]]:
-    """Задачи каждого члена команды с указанным bitrix_id за последние 7 дней.
-    Возвращает { chat_id: [tasks] } — включает только тех, у кого есть bitrix_id."""
+    """Задачи каждого члена команды с bitrix_id за последние 7 дней."""
     if not BITRIX_WEBHOOK:
         return {}
     date_from = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%dT00:00:00")
@@ -264,7 +260,6 @@ async def fetch_team_bitrix_tasks() -> dict[int, list[dict]]:
         return {}
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            # Параллельно опрашиваем всех — быстрее, чем по очереди
             coros = [_fetch_tasks_for_user(client, m["bitrix_id"], date_from) for _, m in targets]
             results = await asyncio.gather(*coros, return_exceptions=True)
             for (chat_id, m), res in zip(targets, results):
@@ -281,16 +276,19 @@ async def fetch_team_bitrix_tasks() -> dict[int, list[dict]]:
 # ─────────────────────────────────────────────
 # CLAUDE — генерация отчёта
 # ─────────────────────────────────────────────
+def _format_task_line(t: dict, indent: str = "    ") -> str:
+    """Одна задача с ID (чтобы Клод не выдумывал номера) и дедлайном."""
+    tid = f" #{t['id']}" if t.get('id') else ""
+    dl = f" (дедлайн {t['deadline']})" if t.get('deadline') else ""
+    return f"{indent}- [{t['status']}]{tid} {t['title']}{dl}"
+
+
 def _format_tasks_short(tasks: list[dict], limit: int = 15) -> str:
-    """Форматирует задачи одного человека в компактный список для промпта.
-    Сортировка по приоритету: сначала просроченные, потом активные, потом завершённые."""
+    """Форматирует задачи одного человека компактно, сортировка по приоритету."""
     if not tasks:
         return "нет задач за неделю"
     ordered = sorted(tasks, key=lambda t: t.get("priority", 9))[:limit]
-    lines = [
-        f"        - [{t['status']}] {t['title']}" + (f" (дедлайн {t['deadline']})" if t['deadline'] else "")
-        for t in ordered
-    ]
+    lines = [_format_task_line(t, indent="        ") for t in ordered]
     tail = f"\n        … и ещё {len(tasks) - limit} задач" if len(tasks) > limit else ""
     return "\n" + "\n".join(lines) + tail
 
@@ -312,13 +310,11 @@ async def generate_report_text() -> tuple[str, str]:
     ) or "  Данные из iiko не получены"
 
     od_task_lines = "\n".join(
-        f"  • [{t['status']}] {t['title']} (дедлайн: {t['deadline']})"
+        _format_task_line(t, indent="  ")
         for t in sorted(od_tasks, key=lambda t: t.get("priority", 9))
     ) or "  Задачи из Bitrix24 не получены"
 
-    # Отчёты команды: у каждого человека — его самоотчёт + его задачи из Б24 рядом.
-    # Показываем всех членов команды, даже тех, кто не прислал самоотчёт —
-    # это позволяет Клоду отметить отсутствие + при этом увидеть, что человек делал по Б24.
+    # Отчёты команды: у каждого — самоотчёт + его задачи из Б24 рядом.
     if TEAM_MEMBERS:
         by_role: dict[str, list[tuple[int, dict]]] = {}
         for chat_id, m in TEAM_MEMBERS.items():
@@ -381,10 +377,14 @@ KPI по точкам (из iiko):
 • Проблемные точки называй по имени с конкретной цифрой и причиной, если она известна.
 • Никогда не пиши общих напутствий типа «продолжаем работать», «держим фокус», «команда молодцы».
 
+===== ID ЗАДАЧ =====
+
+Каждая задача в списках выше промаркирована её номером в Б24 (например, #50415). Когда ссылаешься на задачу — используй её реальный номер из данных. НЕ ВЫДУМЫВАЙ номера. Если ссылки на номер не нужно — не выдумывай и не подставляй никаких «#…» вообще.
+
 ===== СВЕРКА САМООТЧЁТ vs Б24 =====
 
 У каждого члена команды рядом с самоотчётом показаны его задачи из Битрикса за тот же период. Сравни:
-• Если человек в самоотчёте пишет «закрыл X», а в Б24 задача X всё ещё в активном статусе или «❌ Просрочена» — это расхождение, отметь его конкретно («Панфилов сообщил о закрытии, по Б24 не подтверждено»).
+• Если человек в самоотчёте пишет «закрыл X», а в Б24 задача X всё ещё в активном статусе или «❌ Просрочена» — это расхождение, отметь его конкретно.
 • Если по Б24 есть просроченные задачи, а в самоотчёте про них тишина — тоже сигнал.
 • Если самоотчёта нет, но по Б24 видно активную работу — упомяни, что делал по фактам Б24.
 • Если самоотчёта нет и в Б24 активности нет — так и напиши: «неделя прошла без сигналов».
@@ -436,12 +436,14 @@ KPI по точкам (из iiko):
 
 
 # ─────────────────────────────────────────────
-# РАСПИСАНИЕ И ЛОГИКА TELEGRAM
+# ЛОГИКА TELEGRAM
 # ─────────────────────────────────────────────
-async def job_collect_team(app: Application):
+async def _do_ask_team(app: Application) -> tuple[int, int]:
+    """Рассылка формы всем участникам команды. Возвращает (успехов, ошибок)."""
+    ok, fail = 0, 0
     if not TEAM_MEMBERS:
         log.warning("TEAM_MEMBERS пуст — рассылка команде пропущена")
-        return
+        return 0, 0
     for chat_id, m in TEAM_MEMBERS.items():
         name = m["name"]
         role = m["role"]
@@ -450,30 +452,44 @@ async def job_collect_team(app: Application):
             await app.bot.send_message(
                 chat_id=chat_id,
                 text=(
-                    f"👋 Привет, {first_name}! Пятница — время короткого отчёта.\n\n"
+                    f"👋 Привет, {first_name}! Время короткого отчёта.\n\n"
                     f"Ты в роли: *{role}*\n\n"
-                    f"Пришли одним сообщением:\n"
+                    f"Пришли одним сообщением (можно голосовым):\n"
                     f"• Что выполнено за неделю\n"
                     f"• Что в работе / перенесено\n"
-                    f"• Есть ли проблемы или отклонения\n\n"
-                    f"_Дедлайн: 15:00_"
+                    f"• Есть ли проблемы или отклонения"
                 ),
                 parse_mode="Markdown"
             )
+            ok += 1
         except Exception as e:
+            fail += 1
             log.error(f"Не удалось написать {role} — {name} (chat_id={chat_id}): {e}")
+    return ok, fail
 
-async def job_collect_kpi_and_notify_od(app: Application):
-    log.info("Сбор данных из iiko и Bitrix24 (ОД + команда)...")
-    # Параллельно — быстрее
+
+async def job_collect_team(app: Application):
+    """Кроновая задача пятницы 09:00 — рассылка формы команде."""
+    await _do_ask_team(app)
+
+
+async def _do_collect() -> tuple[int, int, int]:
+    """Собирает данные iiko + Б24 (ОД + команда). Возвращает счётчики."""
     iiko_task = asyncio.create_task(fetch_iiko_kpi())
     od_tasks_task = asyncio.create_task(fetch_bitrix_tasks())
     team_tasks_task = asyncio.create_task(fetch_team_bitrix_tasks())
     state["iiko_data"]         = await iiko_task
     state["bitrix_tasks"]      = await od_tasks_task
     state["team_bitrix_tasks"] = await team_tasks_task
+    total_team = sum(len(v) for v in state["team_bitrix_tasks"].values())
+    return len(state["iiko_data"]), len(state["bitrix_tasks"]), total_team
 
-    # Кто не прислал отчёт
+
+async def job_collect_kpi_and_notify_od(app: Application):
+    """Кроновая задача пятницы 16:00 — сбор данных и уведомление ОД."""
+    log.info("Сбор данных из iiko и Bitrix24 (ОД + команда)...")
+    iiko_n, od_n, team_n = await _do_collect()
+
     missing = [
         f"{m['role']} — {m['name']}"
         for chat_id, m in TEAM_MEMBERS.items()
@@ -482,8 +498,6 @@ async def job_collect_kpi_and_notify_od(app: Application):
     missing_note = ""
     if missing:
         missing_note = "\n\n⚠️ Не прислали отчёт:\n  • " + "\n  • ".join(missing)
-
-    total_team_tasks = sum(len(v) for v in state["team_bitrix_tasks"].values())
 
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("✍️ Добавить комментарий", callback_data="add_comment"),
@@ -494,9 +508,9 @@ async def job_collect_kpi_and_notify_od(app: Application):
         chat_id=OD_CHAT_ID,
         text=(
             f"📋 *Данные за неделю собраны.*{missing_note}\n\n"
-            f"Из iiko: {len(state['iiko_data'])} точек\n"
-            f"Задачи ОД из Bitrix24: {len(state['bitrix_tasks'])}\n"
-            f"Задачи команды из Bitrix24: {total_team_tasks} (по {len(state['team_bitrix_tasks'])} чел.)\n"
+            f"Из iiko: {iiko_n} точек\n"
+            f"Задачи ОД из Bitrix24: {od_n}\n"
+            f"Задачи команды из Bitrix24: {team_n} (по {len(state['team_bitrix_tasks'])} чел.)\n"
             f"Отчёты команды: {len(state['team_reports'])}/{len(TEAM_MEMBERS)}\n\n"
             f"Добавь итоговый комментарий (голосом или текстом) — или пропусти."
         ),
@@ -505,9 +519,9 @@ async def job_collect_kpi_and_notify_od(app: Application):
     )
     state["waiting_od_comment"] = False
 
+
 async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    # Кнопки под сообщениями бота — только для авторизованных
     user_id = query.from_user.id if query.from_user else 0
     if not is_authorized(user_id):
         await query.answer("Нет доступа", show_alert=False)
@@ -548,16 +562,102 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
+
+# ── обработчики кнопок меню (для ОД) ────────
+async def action_collect(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    msg = await update.message.reply_text("🔄 Собираю данные из iiko и Bitrix24 (свои + команды)...")
+    iiko_n, od_n, team_n = await _do_collect()
+    await msg.reply_text(
+        f"✅ Готово:\n"
+        f"• iiko: {iiko_n} точек\n"
+        f"• Задачи ОД: {od_n}\n"
+        f"• Задачи команды: {team_n} (по {len(state['team_bitrix_tasks'])} чел.)"
+    )
+
+
+async def action_ask_team(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not TEAM_MEMBERS:
+        await update.message.reply_text("⚠️ TEAM_MEMBERS не задан — некому отправлять.")
+        return
+    await update.message.reply_text(f"📤 Отправляю форму {len(TEAM_MEMBERS)} участникам...")
+    ok, fail = await _do_ask_team(ctx.application)
+    text = f"✅ Разослал: {ok} чел."
+    if fail:
+        text += f"\n⚠️ Не удалось: {fail} (см. логи)"
+    text += "\n\nЖду ответов. Как соберутся — жми «Сгенерировать отчёт»."
+    await update.message.reply_text(text)
+
+
+async def action_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    reports     = state["team_reports"]
+    team_tasks  = state["team_bitrix_tasks"]
+    iiko_count  = len(state["iiko_data"])
+    od_tasks_ct = len(state["bitrix_tasks"])
+
+    text = (
+        f"📊 *Статус сбора данных*\n\n"
+        f"iiko (точки): {iiko_count} {'✅' if iiko_count else '❌ не загружено'}\n"
+        f"Задачи ОД (Б24): {od_tasks_ct} {'✅' if od_tasks_ct else '⏳ не загружено'}\n\n"
+        f"Команда ({len(reports)}/{len(TEAM_MEMBERS)}):\n"
+    )
+
+    if not TEAM_MEMBERS:
+        text += "  • TEAM_MEMBERS не задан\n"
+    else:
+        by_role: dict[str, list[tuple[int, dict]]] = {}
+        for chat_id, m in TEAM_MEMBERS.items():
+            by_role.setdefault(m["role"], []).append((chat_id, m))
+        for role in sorted(by_role.keys()):
+            text += f"  *{role}:*\n"
+            for chat_id, m in sorted(by_role[role], key=lambda x: x[1]["name"]):
+                report_mark = "✅" if chat_id in reports else "⏳"
+                if m.get("bitrix_id"):
+                    n = len(team_tasks.get(chat_id, []))
+                    b24 = f"Б24: {n}"
+                else:
+                    b24 = "Б24: —"
+                text += f"    {report_mark} {m['name']}  ({b24})\n"
+
+    if state["od_comment"]:
+        text += f"\nКомментарий ОД: ✅ добавлен"
+    else:
+        text += f"\nКомментарий ОД: ⏳ не добавлен"
+
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
+async def action_generate(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not state["iiko_data"] and not state["bitrix_tasks"] and not state["team_bitrix_tasks"]:
+        await update.message.reply_text("Сначала собери данные — жми «🔄 Собрать данные».")
+        return
+    await do_generate(ctx.application)
+
+
+# Мапа: текст кнопки → обработчик
+MENU_ACTIONS = {
+    BTN_COLLECT:  action_collect,
+    BTN_ASK_TEAM: action_ask_team,
+    BTN_STATUS:   action_status,
+    BTN_GENERATE: action_generate,
+}
+
+
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_chat.id
     text = update.message.text or (update.message.voice and "[голосовое сообщение]") or ""
 
-    # Незнакомец — молча игнорируем (в лог для отладки, без ответа)
+    # Незнакомец — молча игнорируем (в лог для отладки)
     if not is_authorized(user_id):
         log.info(f"Отклонено сообщение от неавторизованного chat_id={user_id}: {text[:80]!r}")
         return
 
-    # Отчёт от члена команды
+    # 1. Кнопка меню от ОД — обрабатываем как команду
+    if user_id == OD_CHAT_ID and text in MENU_ACTIONS:
+        state["waiting_od_comment"] = False  # если ждали комментарий — сбрасываем
+        await MENU_ACTIONS[text](update, ctx)
+        return
+
+    # 2. Отчёт от члена команды
     if user_id in TEAM_MEMBERS:
         m = TEAM_MEMBERS[user_id]
         state["team_reports"][user_id] = {
@@ -571,6 +671,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # 3. ОД в режиме ожидания комментария
     if user_id == OD_CHAT_ID and state["waiting_od_comment"]:
         state["od_comment"] = text
         state["waiting_od_comment"] = False
@@ -578,11 +679,13 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await do_generate(ctx.application)
         return
 
+    # 4. ОД пишет что-то ещё — напоминаем про меню
     if user_id == OD_CHAT_ID:
         await update.message.reply_text(
-            "Привет! Используй /status чтобы посмотреть статус сбора данных, "
-            "или /generate чтобы сгенерировать отчёт вручную."
+            "Используй меню внизу экрана или /menu, если оно свернулось.",
+            reply_markup=OD_KEYBOARD,
         )
+
 
 async def do_generate(app: Application):
     try:
@@ -606,6 +709,7 @@ async def do_generate(app: Application):
         log.error(f"generate error: {e}")
         await app.bot.send_message(OD_CHAT_ID, f"❌ Ошибка генерации: {e}")
 
+
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_chat.id
 
@@ -623,17 +727,13 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if user_id == OD_CHAT_ID:
         await update.message.reply_text(
             "👋 *Бот еженедельного отчёта ОД*\n\n"
-            "Каждую пятницу автоматически:\n"
+            "Автоматика по пятницам:\n"
             "• 09:00 — рассылаю форму команде\n"
-            "• 16:00 — собираю KPI из iiko и задачи из Bitrix24 (свои + команды)\n"
-            "• 16:30 — прошу тебя добавить комментарий\n"
-            "• После ответа — генерирую и отправляю директору\n\n"
-            "Команды:\n"
-            "/generate — сгенерировать отчёт прямо сейчас\n"
-            "/status — статус сбора данных\n"
-            "/collect — вручную запустить сбор из iiko и Bitrix24\n"
-            "/myid — показать твой chat_id",
-            parse_mode="Markdown"
+            "• 16:00 — собираю KPI из iiko и задачи из Bitrix24\n"
+            "• 16:30 — прошу тебя добавить комментарий и генерирую отчёт\n\n"
+            "Меню — внизу экрана. Если пропало — /menu.",
+            parse_mode="Markdown",
+            reply_markup=OD_KEYBOARD,
         )
         return
 
@@ -644,14 +744,27 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Всё остальное — приватный бот, нейтральный ответ
     await update.message.reply_text(
         "Этот бот приватный — доступ только у команды сети «Хачапури Марико»."
     )
 
+
+async def cmd_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Вернуть клавиатуру, если пропала."""
+    if update.effective_chat.id != OD_CHAT_ID:
+        return
+    await update.message.reply_text("Меню открыто 👇", reply_markup=OD_KEYBOARD)
+
+
+async def cmd_hide(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Скрыть клавиатуру."""
+    if update.effective_chat.id != OD_CHAT_ID:
+        return
+    await update.message.reply_text("Меню скрыто. Вернуть — /menu", reply_markup=ReplyKeyboardRemove())
+
+
 async def cmd_myid(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Единственная публичная команда — чтобы новый человек мог узнать свой chat_id
-    и передать его ОД для подключения. Не выдаёт никаких данных бота."""
+    """Публичная команда — узнать свой chat_id для подключения."""
     user_id = update.effective_chat.id
     await update.message.reply_text(
         f"Твой chat_id: `{user_id}`\n\n"
@@ -659,80 +772,43 @@ async def cmd_myid(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+
+# ── /-команды как алиасы кнопок (на всякий случай) ──
+async def cmd_collect_alias(update: Update, ctx):
     if update.effective_chat.id != OD_CHAT_ID:
         return
-    reports     = state["team_reports"]
-    team_tasks  = state["team_bitrix_tasks"]
-    iiko_count  = len(state["iiko_data"])
-    od_tasks_ct = len(state["bitrix_tasks"])
+    await action_collect(update, ctx)
 
-    text = (
-        f"📊 *Статус сбора данных*\n\n"
-        f"iiko (точки): {iiko_count} {'✅' if iiko_count else '❌ не загружено'}\n"
-        f"Задачи ОД (Б24): {od_tasks_ct} {'✅' if od_tasks_ct else '⏳ не загружено'}\n\n"
-        f"Команда ({len(reports)}/{len(TEAM_MEMBERS)}):\n"
-    )
 
-    if not TEAM_MEMBERS:
-        text += "  • TEAM_MEMBERS не задан\n"
-    else:
-        # Группируем по роли для читаемости
-        by_role: dict[str, list[tuple[int, dict]]] = {}
-        for chat_id, m in TEAM_MEMBERS.items():
-            by_role.setdefault(m["role"], []).append((chat_id, m))
-        for role in sorted(by_role.keys()):
-            text += f"  *{role}:*\n"
-            for chat_id, m in sorted(by_role[role], key=lambda x: x[1]["name"]):
-                report_mark = "✅" if chat_id in reports else "⏳"
-                if m.get("bitrix_id"):
-                    n = len(team_tasks.get(chat_id, []))
-                    b24 = f"Б24: {n}"
-                else:
-                    b24 = "Б24: —"
-                text += f"    {report_mark} {m['name']}  ({b24})\n"
-
-    if state["od_comment"]:
-        text += f"\nКомментарий ОД: ✅ добавлен"
-    else:
-        text += f"\nКомментарий ОД: ⏳ не добавлен"
-
-    await update.message.reply_text(text, parse_mode="Markdown")
-
-async def cmd_collect(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_ask_team_alias(update: Update, ctx):
     if update.effective_chat.id != OD_CHAT_ID:
         return
-    await update.message.reply_text("🔄 Собираю данные из iiko и Bitrix24 (свои + команды)...")
-    iiko_task = asyncio.create_task(fetch_iiko_kpi())
-    od_tasks_task = asyncio.create_task(fetch_bitrix_tasks())
-    team_tasks_task = asyncio.create_task(fetch_team_bitrix_tasks())
-    state["iiko_data"]         = await iiko_task
-    state["bitrix_tasks"]      = await od_tasks_task
-    state["team_bitrix_tasks"] = await team_tasks_task
-    total_team_tasks = sum(len(v) for v in state["team_bitrix_tasks"].values())
-    await update.message.reply_text(
-        f"✅ Готово:\n"
-        f"• iiko: {len(state['iiko_data'])} точек\n"
-        f"• Задачи ОД: {len(state['bitrix_tasks'])}\n"
-        f"• Задачи команды: {total_team_tasks} (по {len(state['team_bitrix_tasks'])} чел.)"
-    )
+    await action_ask_team(update, ctx)
 
-async def cmd_generate(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+
+async def cmd_status_alias(update: Update, ctx):
     if update.effective_chat.id != OD_CHAT_ID:
         return
-    if not state["iiko_data"] and not state["bitrix_tasks"] and not state["team_bitrix_tasks"]:
-        await update.message.reply_text("Сначала собери данные: /collect")
+    await action_status(update, ctx)
+
+
+async def cmd_generate_alias(update: Update, ctx):
+    if update.effective_chat.id != OD_CHAT_ID:
         return
-    await do_generate(ctx.application)
+    await action_generate(update, ctx)
+
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start",    cmd_start))
+    app.add_handler(CommandHandler("menu",     cmd_menu))
+    app.add_handler(CommandHandler("hide",     cmd_hide))
     app.add_handler(CommandHandler("myid",     cmd_myid))
-    app.add_handler(CommandHandler("status",   cmd_status))
-    app.add_handler(CommandHandler("collect",  cmd_collect))
-    app.add_handler(CommandHandler("generate", cmd_generate))
+    app.add_handler(CommandHandler("collect",  cmd_collect_alias))
+    app.add_handler(CommandHandler("ask_team", cmd_ask_team_alias))
+    app.add_handler(CommandHandler("status",   cmd_status_alias))
+    app.add_handler(CommandHandler("generate", cmd_generate_alias))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT | filters.VOICE, handle_message))
 
@@ -749,6 +825,7 @@ def main():
 
     log.info("Бот запущен")
     app.run_polling(drop_pending_updates=True)
+
 
 if __name__ == "__main__":
     main()
