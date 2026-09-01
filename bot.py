@@ -234,7 +234,7 @@ KPI по точкам (из iiko):
     client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
     message = await client.messages.create(
         model="claude-sonnet-5",
-        max_tokens=3000,
+        max_tokens=16000,
         messages=[{"role": "user", "content": prompt}]
     )
 
