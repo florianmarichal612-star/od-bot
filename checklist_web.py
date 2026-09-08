@@ -33,11 +33,21 @@ def _authorized_user(request: web.Request) -> tuple[int, str] | None:
         return (OD_CHAT_ID or 1, "Dev ОД")
     parsed = verify_init_data(init_data, BOT_TOKEN)
     if not parsed:
+        # ВРЕМЕННО: диагностика проблем с доступом к чек-листу.
+        log.warning(
+            f"checklist auth FAILED: init_data_len={len(init_data)} "
+            f"bot_token_set={bool(BOT_TOKEN)} od_chat_id={OD_CHAT_ID}"
+        )
         return None
     user = parsed.get("user") or {}
     chat_id = user.get("id")
     if not chat_id:
+        log.warning(f"checklist auth: verified but no user.id in parsed data: {parsed!r}")
         return None
+    log.info(
+        f"checklist auth OK: chat_id={chat_id} od_chat_id={OD_CHAT_ID} "
+        f"in_checklist_users={chat_id in CHECKLIST_USERS}"
+    )
     if chat_id == OD_CHAT_ID:
         return (chat_id, user.get("first_name") or "ОД")
     if chat_id in CHECKLIST_USERS:
