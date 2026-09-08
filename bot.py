@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 import httpx
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
-    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove,
+    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, WebAppInfo,
 )
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
@@ -18,6 +18,9 @@ from telegram.ext import (
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import anthropic
+
+from checklist_config import is_checklist_user, webapp_base_url
+from checklist_web import start_web_server
 
 # ─────────────────────────────────────────────
 # НАСТРОЙКИ (берутся из переменных окружения)
@@ -83,12 +86,21 @@ BTN_COLLECT   = "🔄 Собрать данные"
 BTN_ASK_TEAM  = "📤 Запросить отчёты"
 BTN_STATUS    = "📊 Статус"
 BTN_GENERATE  = "📝 Сгенерировать отчёт"
+BTN_CHECKLIST = "📋 Чек-лист визита"
+
+_checklist_url = f"{webapp_base_url()}/checklist" if webapp_base_url() else ""
+_checklist_button = (
+    KeyboardButton(BTN_CHECKLIST, web_app=WebAppInfo(url=_checklist_url))
+    if _checklist_url.startswith("https://")
+    else KeyboardButton(BTN_CHECKLIST)
+)
 
 OD_KEYBOARD = ReplyKeyboardMarkup(
     [
         [KeyboardButton(BTN_COLLECT), KeyboardButton(BTN_STATUS)],
         [KeyboardButton(BTN_ASK_TEAM)],
         [KeyboardButton(BTN_GENERATE)],
+        [_checklist_button],
     ],
     resize_keyboard=True,
     is_persistent=True,
@@ -633,13 +645,40 @@ async def action_generate(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await do_generate(ctx.application)
 
 
+async def action_checklist_fallback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Срабатывает только если WEBAPP_URL не настроен — кнопка тогда шлёт обычный текст."""
+    await update.message.reply_text(
+        "Чек-лист временно недоступен: на сервере не настроен WEBAPP_URL "
+        "(или ещё не сгенерирован публичный домен на Railway)."
+    )
+
+
 # Мапа: текст кнопки → обработчик
 MENU_ACTIONS = {
     BTN_COLLECT:  action_collect,
     BTN_ASK_TEAM: action_ask_team,
     BTN_STATUS:   action_status,
     BTN_GENERATE: action_generate,
+    BTN_CHECKLIST: action_checklist_fallback,
 }
+
+
+async def cmd_checklist(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Открыть Mini App чек-листа визита — доступно любому разрешённому ОД, не только главному."""
+    chat_id = update.effective_chat.id
+    if not is_checklist_user(chat_id):
+        await update.message.reply_text("Доступ к чек-листу визита не выдан. Обратись к Веронике.")
+        return
+    url = f"{webapp_base_url()}/checklist" if webapp_base_url() else ""
+    if not url.startswith("https://"):
+        await update.message.reply_text(
+            "Чек-лист временно недоступен: не настроен WEBAPP_URL."
+        )
+        return
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("📋 Открыть чек-лист визита", web_app=WebAppInfo(url=url))
+    ]])
+    await update.message.reply_text("Чек-лист визита:", reply_markup=keyboard)
 
 
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -798,17 +837,18 @@ async def cmd_generate_alias(update: Update, ctx):
     await action_generate(update, ctx)
 
 
-def main():
+async def async_main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    app.add_handler(CommandHandler("start",    cmd_start))
-    app.add_handler(CommandHandler("menu",     cmd_menu))
-    app.add_handler(CommandHandler("hide",     cmd_hide))
-    app.add_handler(CommandHandler("myid",     cmd_myid))
-    app.add_handler(CommandHandler("collect",  cmd_collect_alias))
-    app.add_handler(CommandHandler("ask_team", cmd_ask_team_alias))
-    app.add_handler(CommandHandler("status",   cmd_status_alias))
-    app.add_handler(CommandHandler("generate", cmd_generate_alias))
+    app.add_handler(CommandHandler("start",     cmd_start))
+    app.add_handler(CommandHandler("menu",      cmd_menu))
+    app.add_handler(CommandHandler("hide",      cmd_hide))
+    app.add_handler(CommandHandler("myid",      cmd_myid))
+    app.add_handler(CommandHandler("collect",   cmd_collect_alias))
+    app.add_handler(CommandHandler("ask_team",  cmd_ask_team_alias))
+    app.add_handler(CommandHandler("status",    cmd_status_alias))
+    app.add_handler(CommandHandler("generate",  cmd_generate_alias))
+    app.add_handler(CommandHandler("checklist", cmd_checklist))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT | filters.VOICE, handle_message))
 
@@ -823,8 +863,24 @@ def main():
     )
     scheduler.start()
 
-    log.info("Бот запущен")
-    app.run_polling(drop_pending_updates=True)
+    port = int(os.environ.get("PORT", "8080"))
+    web_runner = await start_web_server(port)
+    log.info(f"Веб-сервер чек-листа запущен на порту {port}")
+
+    async with app:
+        await app.start()
+        await app.updater.start_polling(drop_pending_updates=True)
+        log.info("Бот запущен")
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await app.updater.stop()
+            await app.stop()
+            await web_runner.cleanup()
+
+
+def main():
+    asyncio.run(async_main())
 
 
 if __name__ == "__main__":

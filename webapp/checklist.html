@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Чек-лист визита ОД · Хачапури Марико</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root{
+    --terracotta:#C15A3A; --burgundy:#7A2E39; --teal:#1F6E6A; --orange:#E08A2E;
+    --cream:#FBF4EC; --ink:#2B2622; --grey:#8A8177; --line:#E7DBCC; --card:#FFFFFF;
+    --yes:#1F6E6A; --no:#C1443A; --part:#E08A2E; --skip:#B8AFA4;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:var(--cream);color:var(--ink);
+    font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+    padding-bottom:160px}
+  header{position:sticky;top:0;z-index:20;background:var(--burgundy);color:#fff;
+    padding:14px 16px 12px;box-shadow:0 2px 10px rgba(0,0,0,.12)}
+  header h1{margin:0;font-size:17px;font-weight:800;letter-spacing:.2px}
+  header p{margin:2px 0 0;font-size:12px;opacity:.8}
+  #whoami{opacity:.9;font-weight:600}
+  .bar{height:5px;background:rgba(255,255,255,.22);border-radius:4px;margin-top:10px;overflow:hidden}
+  .bar > i{display:block;height:100%;width:0;background:var(--orange);transition:width .25s}
+  .barlbl{font-size:11px;opacity:.85;margin-top:4px}
+  main{max-width:720px;margin:0 auto;padding:14px 12px}
+  .meta{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:14px}
+  .meta label{display:block;font-size:11px;font-weight:700;color:var(--burgundy);text-transform:uppercase;letter-spacing:.4px;margin:8px 0 4px}
+  .meta label:first-child{margin-top:0}
+  .meta input{width:100%;border:1px solid var(--line);border-radius:9px;padding:10px 11px;font-size:15px;background:#FFFDF8}
+  details{background:var(--card);border:1px solid var(--line);border-radius:14px;margin-bottom:12px;overflow:hidden}
+  summary{list-style:none;cursor:pointer;padding:13px 14px;display:flex;align-items:center;gap:10px;
+    font-weight:800;font-size:15px;color:#fff}
+  summary::-webkit-details-marker{display:none}
+  summary .chev{margin-left:auto;transition:transform .2s;opacity:.85;font-size:13px}
+  details[open] summary .chev{transform:rotate(90deg)}
+  summary .cnt{font-size:12px;font-weight:600;background:rgba(255,255,255,.22);padding:2px 8px;border-radius:20px}
+  .b0 summary{background:var(--burgundy)} .b1 summary{background:var(--teal)}
+  .item{padding:11px 14px;border-top:1px solid var(--line)}
+  .item .q{font-size:14.5px;margin-bottom:9px}
+  .seg{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  .seg button{border:1.5px solid var(--line);background:#fff;border-radius:10px;padding:9px 4px;
+    font-size:13px;font-weight:700;color:var(--grey);cursor:pointer;transition:.12s}
+  .seg button.on[data-v="Да"]{background:var(--yes);border-color:var(--yes);color:#fff}
+  .seg button.on[data-v="Нет"]{background:var(--no);border-color:var(--no);color:#fff}
+  .seg button.on[data-v="Частично"]{background:var(--part);border-color:var(--part);color:#fff}
+  .seg button.on[data-v="—"]{background:var(--skip);border-color:var(--skip);color:#fff}
+  .cmt{margin-top:9px;display:none}
+  .cmt.show{display:block}
+  .cmt textarea{width:100%;border:1px solid var(--line);border-radius:9px;padding:9px 10px;font:14px inherit;
+    background:#FFFDF8;resize:vertical;min-height:44px}
+  .cmt .hint{font-size:11px;color:var(--grey);margin:2px 2px 5px}
+  .econ{padding:6px 14px 12px;border-top:1px solid var(--line)}
+  .econ h4{margin:12px 0 6px;font-size:12px;color:var(--burgundy);text-transform:uppercase;letter-spacing:.4px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .grid .f label{display:block;font-size:11px;color:var(--grey);margin-bottom:3px}
+  .grid .f input{width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 9px;font-size:14px;background:#FFFDF8}
+  .deg{padding:8px 14px 14px;border-top:1px solid var(--line)}
+  .degrow{display:grid;grid-template-columns:1fr 1fr auto;gap:6px;margin-bottom:7px;align-items:start}
+  .degrow input{border:1px solid var(--line);border-radius:8px;padding:8px 9px;font-size:13.5px;background:#FFFDF8;width:100%}
+  .degrow .st{display:flex;gap:4px}
+  .degrow .st button{border:1.5px solid var(--line);background:#fff;border-radius:8px;width:34px;height:34px;font-weight:800;font-size:13px;color:var(--grey);cursor:pointer}
+  .degrow .st button.on[data-v="Да"]{background:var(--yes);border-color:var(--yes);color:#fff}
+  .degrow .st button.on[data-v="Нет"]{background:var(--no);border-color:var(--no);color:#fff}
+  .degrow .st button.on[data-v="Стоп"]{background:#5a5148;border-color:#5a5148;color:#fff}
+  .degrow .rm{grid-column:1/-1;justify-self:end;background:none;border:none;color:var(--no);font-size:12px;cursor:pointer;padding:0}
+  .addbtn{width:100%;border:1.5px dashed var(--line);background:#fff;border-radius:10px;padding:10px;
+    color:var(--teal);font-weight:700;font-size:14px;cursor:pointer;margin-top:4px}
+  footer{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid var(--line);
+    padding:10px 12px calc(10px + env(safe-area-inset-bottom));z-index:30;box-shadow:0 -3px 14px rgba(0,0,0,.07)}
+  .foot{max-width:720px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .foot button{border:none;border-radius:11px;padding:13px 8px;font-size:13.5px;font-weight:800;cursor:pointer}
+  .foot .primary{background:var(--burgundy);color:#fff}
+  .foot .second{background:var(--teal);color:#fff}
+  .foot .hist{background:var(--orange);color:#fff}
+  .foot .wide{grid-column:1/-1}
+  .foot .ghost{background:#fff;border:1.5px solid var(--line);color:var(--grey);font-weight:700}
+  dialog{border:none;border-radius:16px;padding:0;width:min(640px,94vw);box-shadow:0 20px 60px rgba(0,0,0,.3)}
+  dialog::backdrop{background:rgba(43,38,34,.5)}
+  .dlg-h{padding:14px 16px;background:var(--burgundy);color:#fff;font-weight:800;display:flex;align-items:center}
+  .dlg-h button{margin-left:auto;background:none;border:none;color:#fff;font-size:20px;cursor:pointer;line-height:1}
+  .dlg-b{padding:14px 16px}
+  .dlg-b p{margin:0 0 8px;font-size:13px;color:var(--grey)}
+  textarea.out{width:100%;height:280px;border:1px solid var(--line);border-radius:10px;padding:11px;
+    font:12.5px/1.4 ui-monospace,Menlo,Consolas,monospace;background:#FBF7F0;white-space:pre;overflow:auto}
+  .dlg-b .copy{margin-top:10px;width:100%;background:var(--orange);color:#fff;border:none;border-radius:11px;padding:13px;font-weight:800;font-size:15px;cursor:pointer}
+  .hist-item{padding:11px 4px;border-bottom:1px solid var(--line);cursor:pointer}
+  .hist-item:last-child{border-bottom:none}
+  .hist-item b{color:var(--burgundy)}
+  .hist-item .sub{font-size:12px;color:var(--grey);margin-top:2px}
+  .toast{position:fixed;bottom:190px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;
+    padding:10px 16px;border-radius:24px;font-size:13px;opacity:0;transition:.2s;pointer-events:none;z-index:40;max-width:88vw;text-align:center}
+  .toast.show{opacity:1}
+  .noaccess{text-align:center;padding:60px 16px;color:var(--grey)}
+  .noaccess .emoji{font-size:40px;margin-bottom:12px}
+  .noaccess .title{font-weight:700;color:var(--ink);margin-bottom:6px}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Чек-лист визита ОД</h1>
+  <p>«Хачапури Марико» · заполняешь на месте — отчёт собирается автоматически</p>
+  <p id="whoami"></p>
+  <div class="bar"><i id="prog"></i></div>
+  <div class="barlbl" id="proglbl">Отмечено 0 из 0</div>
+</header>
+
+<main>
+  <div class="meta">
+    <label>Город / объект</label><input id="m_city" placeholder="напр. ХМ Казань">
+    <label>Даты визита</label><input id="m_dates" placeholder="напр. 02–04.06.2026">
+    <label>Проверяющий (ОД)</label><input id="m_od" placeholder="напр. Вероника Гаврилюк">
+  </div>
+  <div id="blocks"></div>
+</main>
+
+<footer>
+  <div class="foot">
+    <button class="second" onclick="showBitrix()">Задачи для Bitrix24</button>
+    <button class="primary" onclick="showClaude()">Отчёт для Claude</button>
+    <button class="second" onclick="submitVisit()">✅ Завершить визит</button>
+    <button class="hist" onclick="showHistory()">🕘 История визитов</button>
+    <button class="ghost wide" onclick="if(confirm('Очистить черновик? Сохранённые визиты в истории не пострадают.')){clearAll()}">Очистить черновик</button>
+  </div>
+</footer>
+
+<dialog id="dlg">
+  <div class="dlg-h"><span id="dlg_t">Экспорт</span><button onclick="dlg.close()">✕</button></div>
+  <div class="dlg-b">
+    <p id="dlg_p"></p>
+    <textarea class="out" id="dlg_out" readonly></textarea>
+    <button class="copy" onclick="copyOut()">Скопировать</button>
+    <button class="copy" id="dlg_bitrix_btn" style="display:none;background:var(--teal)" onclick="createBitrixTasks()">Создать задачи в Bitrix24</button>
+    <div id="dlg_status" style="font-size:12.5px;margin-top:8px;min-height:16px"></div>
+  </div>
+</dialog>
+
+<dialog id="dlgHistory">
+  <div class="dlg-h"><span>История визитов</span><button onclick="dlgHistory.close()">✕</button></div>
+  <div class="dlg-b">
+    <div id="historyList">Загрузка…</div>
+  </div>
+</dialog>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const BLOCKS = [
+  {name:"УПРАВЛЕНИЕ", prio:"Высокий", resp:"Упр., шеф", items:[
+    "Управляющий и шеф на месте / в оперативном доступе",
+    "Задачи ставятся с точками контроля",
+    "Выставляется приоритетность задач (тайм-менеджмент)",
+    "Ведётся ежедневное планирование руководителей",
+    "Есть работающий трекер/чек-лист постановки задач",
+    "Команда укомплектована и адаптирована"]},
+  {name:"СОСТОЯНИЕ РЕСТОРАНА", prio:"Средний", resp:"Упр., собственник", items:[
+    "Входная группа привлекательна и ухожена",
+    "Режимная табличка актуальна и размещена на двери",
+    "Меню/навигация на входе чистые",
+    "Зал чистый, мелкий мусор отсутствует",
+    "Гостевые туалеты чистые (без пятен/пыли)",
+    "Расходники и декор в туалетах в наличии",
+    "Свет / вытяжка / климат комфортны",
+    "Мебель и интерьер в исправном состоянии"]},
+  {name:"ЭКОНОМИКА", prio:"Высокий", resp:"Упр.", econ:true, items:[
+    "Динамика ТО положительная",
+    "Средний чек в норме / растёт",
+    "Наценка в целевом коридоре",
+    "Гоу-листы актуальны, ведётся работа с ТОП-30",
+    "Скидки действуют корректно",
+    "Мастер-графики внедрены, комплектация смены рациональна",
+    "Ведётся еженедельный мониторинг показателей"]},
+  {name:"КУХНЯ (технология)", prio:"Критично", resp:"Шеф, РШ", items:[
+    "Вес блюд стабилен, соответствует ТТК",
+    "Вкус стабилен (соль / острота / кислота)",
+    "Температура подачи в норме",
+    "Бланки заготовок ведутся",
+    "Нормы СанПиН соблюдаются, маркировка корректна",
+    "Расстановка поваров рациональна (горячий цех)",
+    "Ведётся бракераж готовой продукции",
+    "Оборудование исправно и чистое"]},
+  {name:"ДЕГУСТАЦИЯ", prio:"Критично", resp:"Шеф, РШ", degust:true, items:[]},
+  {name:"ЗАЛ (сервис)", prio:"Высокий", resp:"Упр., менеджеры", items:[
+    "Тайминг подхода и приёма заказа соблюдается",
+    "Заказы не теряются",
+    "Стандарты сервиса выполняются",
+    "Отрабатываются допродажи (апселл / кросс-селл)",
+    "Есть план по среднему чеку и допродажам",
+    "Радушный приём / работа хостес на уровне",
+    "Отработана работа с конфликтами",
+    "Ведутся кросс-тренинги, ФНБ, пятиминутки"]},
+  {name:"СТАНДАРТЫ И СЕРВИС", prio:"Средний", resp:"Упр., менеджеры", items:[
+    "Красочное описание блюд используется",
+    "Работа с подносом",
+    "Правильная подача (не закрытой рукой, не за зоной гостя)",
+    "Без уменьшительно-ласкательных суффиксов",
+    "Легенды / ритуалы (чача, джигитовка) выполняются",
+    "Проводится переаттестация сотрудников зала",
+    "Внешний вид и форма персонала в порядке"]},
+  {name:"МАРКЕТИНГ", prio:"Средний", resp:"Упр., маркетолог", items:[
+    "Актуальные акции размещены (POS, тент-карты, окна)",
+    "Навигация и входная POS в порядке",
+    "Доставка запущена и работает",
+    "Соцсети / таргет / блогеры активны",
+    "Банкетная страница и площадки актуальны",
+    "Сезонные форматы задействованы (веранда и т.п.)",
+    "Сайт и меню актуальны"]},
+  {name:"АУДИТ", prio:"Высокий", resp:"Упр., шеф", items:[
+    "Внутренние аудиты проводятся регулярно",
+    "Аудиты проводятся в рандомном порядке",
+    "Нарушения из прошлых аудитов закрыты"]},
+];
+const ECON_FIELDS = [
+  ["e_to","ТО, % к базису"],["e_guests","Гости, %"],["e_checks","Чеки, %"],["e_avg","Ср. чек, %"],
+  ["e_mk_all","Наценка общая"],["e_mk_kit","Наценка кухня"],["e_mk_bar","Наценка бар"],["e_mk_lun","Наценка ланч"]
+];
+const KEY="odchecklist_v1";
+let state = {answers:{}, comments:{}, econ:{}, degust:[], meta:{}};
+let myName = "";
+
+/* ---------- Telegram WebApp ---------- */
+try{
+  if(window.Telegram && Telegram.WebApp){
+    Telegram.WebApp.ready();
+    Telegram.WebApp.expand();
+  }
+}catch(e){}
+function initDataHeader(){
+  try{ return (window.Telegram && Telegram.WebApp && Telegram.WebApp.initData) || ""; }catch(e){ return ""; }
+}
+
+function loadLocal(){try{return JSON.parse(localStorage.getItem(KEY))}catch(e){return null}}
+function saveLocal(){try{localStorage.setItem(KEY,JSON.stringify(state))}catch(e){}}
+
+let syncTimer=null;
+function save(){
+  saveLocal();
+  clearTimeout(syncTimer);
+  syncTimer=setTimeout(syncToServer, 1200);
+}
+function syncToServer(){
+  fetch("/api/checklist/draft", {
+    method:"POST",
+    headers:{"Content-Type":"application/json","X-Telegram-Init-Data": initDataHeader()},
+    body: JSON.stringify({state})
+  }).catch(()=>{});
+}
+
+function render(){
+  const root = document.getElementById("blocks"); root.innerHTML="";
+  BLOCKS.forEach((b,bi)=>{
+    const d=document.createElement("details"); d.className="b"+(bi%2);
+    if(bi<2) d.open=true;
+    const s=document.createElement("summary");
+    s.innerHTML=`<span>${b.name}</span><span class="cnt" id="cnt${bi}"></span><span class="chev">▶</span>`;
+    d.appendChild(s);
+
+    if(b.econ){
+      const e=document.createElement("div"); e.className="econ";
+      e.innerHTML=`<h4>Показатели (впиши цифры)</h4><div class="grid">`+
+        ECON_FIELDS.map(f=>`<div class="f"><label>${f[1]}</label><input value="${esc(state.econ[f[0]]||'')}" data-econ="${f[0]}"></div>`).join("")+
+        `</div><h4 style="margin-top:14px">Флаги</h4>`;
+      d.appendChild(e);
+      e.querySelectorAll("[data-econ]").forEach(inp=>inp.addEventListener("input",ev=>{state.econ[ev.target.dataset.econ]=ev.target.value;save()}));
+    }
+    if(b.degust){ d.appendChild(buildDegust()); }
+
+    b.items.forEach((q,ii)=>{
+      const id=bi+"_"+ii;
+      const it=document.createElement("div"); it.className="item";
+      it.innerHTML=`<div class="q">${q}</div>
+        <div class="seg">${["Да","Нет","Частично","—"].map(v=>`<button data-v="${v}">${v}</button>`).join("")}</div>
+        <div class="cmt"><div class="hint">коротко: что не так / что сделать — это станет задачей</div>
+        <textarea placeholder="комментарий"></textarea></div>`;
+      const cmt=it.querySelector(".cmt"), ta=it.querySelector("textarea");
+      ta.value=state.comments[id]||"";
+      if(state.comments[id]) cmt.classList.add("show");
+      ta.addEventListener("input",()=>{state.comments[id]=ta.value;save()});
+      it.querySelectorAll(".seg button").forEach(btn=>{
+        if(state.answers[id]===btn.dataset.v) btn.classList.add("on");
+        btn.addEventListener("click",()=>{
+          it.querySelectorAll(".seg button").forEach(x=>x.classList.remove("on"));
+          btn.classList.add("on"); state.answers[id]=btn.dataset.v;
+          if(btn.dataset.v==="Да"||btn.dataset.v==="—") cmt.classList.remove("show");
+          else cmt.classList.add("show");
+          save(); updateProgress();
+        });
+      });
+      d.appendChild(it);
+    });
+    root.appendChild(d);
+  });
+  ["city","dates","od"].forEach(k=>{
+    const el=document.getElementById("m_"+k); el.value=state.meta[k]||"";
+    el.addEventListener("input",()=>{state.meta[k]=el.value;save()});
+  });
+  updateProgress();
+}
+
+function buildDegust(){
+  const wrap=document.createElement("div"); wrap.className="deg";
+  const list=document.createElement("div"); list.id="deglist";
+  wrap.appendChild(list);
+  const add=document.createElement("button"); add.className="addbtn"; add.textContent="+ Добавить блюдо";
+  add.onclick=()=>{state.degust.push({sec:"",dish:"",st:"",note:""});save();renderDegust();};
+  wrap.appendChild(add);
+  setTimeout(renderDegust,0);
+  return wrap;
+}
+function renderDegust(){
+  const list=document.getElementById("deglist"); if(!list) return; list.innerHTML="";
+  state.degust.forEach((row,i)=>{
+    const r=document.createElement("div"); r.className="degrow";
+    r.innerHTML=`<input placeholder="раздел меню" value="${esc(row.sec)}">
+      <input placeholder="блюдо" value="${esc(row.dish)}">
+      <div class="st">${["Да","Нет","Стоп"].map(v=>`<button data-v="${v}" class="${row.st===v?'on':''}">${v[0]}</button>`).join("")}</div>
+      <input placeholder="замечание" value="${esc(row.note)}" style="grid-column:1/3">
+      <button class="rm">удалить</button>`;
+    const [ins,ind,inn]=r.querySelectorAll("input");
+    ins.oninput=()=>{row.sec=ins.value;save()}; ind.oninput=()=>{row.dish=ind.value;save()}; inn.oninput=()=>{row.note=inn.value;save()};
+    r.querySelectorAll(".st button").forEach(b=>b.onclick=()=>{row.st=b.dataset.v;save();renderDegust()});
+    r.querySelector(".rm").onclick=()=>{state.degust.splice(i,1);save();renderDegust()};
+    list.appendChild(r);
+  });
+}
+function esc(s){return (s||"").toString().replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
+
+function updateProgress(){
+  let total=0,done=0;
+  BLOCKS.forEach((b,bi)=>{
+    let bt=b.items.length, bd=0;
+    b.items.forEach((_,ii)=>{ if(state.answers[bi+"_"+ii]) bd++; });
+    total+=bt; done+=bd;
+    const c=document.getElementById("cnt"+bi); if(c) c.textContent=b.items.length?`${bd}/${bt}`:"дегустация";
+  });
+  const pct=total?Math.round(done/total*100):0;
+  document.getElementById("prog").style.width=pct+"%";
+  document.getElementById("proglbl").textContent=`Отмечено ${done} из ${total} · ${pct}%`;
+}
+
+/* ---------- сборка отчёта в текст (используется и live, и для истории) ---------- */
+function buildReportLines(d){
+  let L=[`Город: ${d.meta.city||"—"}`,`Даты: ${d.meta.dates||"—"}`,`ОД: ${d.meta.od||"—"}`,""];
+  BLOCKS.forEach((b,bi)=>{
+    if(b.degust){
+      const rows=(d.degust||[]).filter(r=>r.dish);
+      if(!rows.length) return;
+      L.push(`[ДЕГУСТАЦИЯ]`);
+      rows.forEach(r=>L.push(`- ${r.sec?r.sec+" / ":""}${r.dish}: ${r.st||"?"}${r.note?" — "+r.note:""}`));
+      L.push(""); return;
+    }
+    const lines=[];
+    if(b.econ){
+      const nums=ECON_FIELDS.filter(f=>d.econ[f[0]]).map(f=>`${f[1]}: ${d.econ[f[0]]}`);
+      if(nums.length) lines.push("· Показатели: "+nums.join(" | "));
+    }
+    b.items.forEach((q,ii)=>{
+      const a=d.answers[bi+"_"+ii]; if(!a) return;
+      const c=d.comments[bi+"_"+ii];
+      lines.push(`- ${q}: ${a}${c?" — "+c:""}`);
+    });
+    if(lines.length){ L.push(`[${b.name}] (приоритет: ${b.prio}, отв.: ${b.resp})`); L.push(...lines); L.push(""); }
+  });
+  return L;
+}
+
+/* ---------- экспорт для Claude ---------- */
+function showClaude(){
+  document.getElementById("dlg_bitrix_btn").style.display="none";
+  let L=["ОД-ЧЕКЛИСТ — данные для сборки отчёта", ...buildReportLines(state)];
+  L.push("---","Задача: собери отчёт ОД в моём фирменном стиле (блоки → прозаическое наблюдение + нумерованные задачи из «Нет/Частично» + Ответственный/Срок/Приоритет), и лист «Календарь сроков». Верни .xlsx.");
+  openDlg("Отчёт для Claude", "Скопируй и вставь мне в чат — я соберу готовый отчёт в твоём стиле.", L.join("\n"));
+}
+
+/* ---------- задачи для Bitrix24 ---------- */
+function showBitrix(){
+  let out=["ЗАДАЧИ ДЛЯ BITRIX24",
+    `Объект: ${state.meta.city||"—"} · ${state.meta.dates||"—"}`,""];
+  let n=0;
+  const structured=[];
+  BLOCKS.forEach((b,bi)=>{
+    b.items.forEach((q,ii)=>{
+      const a=state.answers[bi+"_"+ii];
+      if(a==="Нет"||a==="Частично"){
+        n++; const c=state.comments[bi+"_"+ii];
+        out.push(`${n}. [${b.name}] ${q}`);
+        out.push(`   Что сделать: ${c||"(уточнить)"}`);
+        out.push(`   Ответственный: ${b.resp} · Приоритет: ${b.prio}${a==="Частично"?" (частично)":""}`);
+        out.push("");
+        structured.push({section:b.name, question:q, comment:c||"", responsible:b.resp, priority:b.prio, object: state.meta.city||""});
+      }
+    });
+  });
+  state.degust.filter(r=>r.dish&&(r.st==="Нет"||r.st==="Стоп")).forEach(r=>{
+    n++; out.push(`${n}. [ДЕГУСТАЦИЯ] ${r.dish}${r.sec?" ("+r.sec+")":""}`);
+    out.push(`   Замечание: ${r.note||"—"} · Ответственный: Шеф, РШ · Приоритет: Критично`); out.push("");
+    structured.push({section:"ДЕГУСТАЦИЯ", question:r.dish, comment:r.note||"", responsible:"Шеф, РШ", priority:"Критично", object: state.meta.city||""});
+  });
+  const bBtn=document.getElementById("dlg_bitrix_btn");
+  if(n===0){
+    out.push("Пока нет пунктов «Нет/Частично» — задач не сформировано.");
+    bBtn.style.display="none";
+  } else {
+    out.splice(3,0,`Всего задач: ${n}`,"");
+    bBtn.style.display="block"; bBtn.disabled=false; bBtn.textContent="Создать задачи в Bitrix24";
+    window._pendingBitrixTasks=structured;
+  }
+  openDlg("Задачи для Bitrix24", "Список сформирован из всех «Нет» и «Частично». Можно скопировать вручную или создать задачи в Bitrix24 одной кнопкой.", out.join("\n"));
+}
+
+function dlgStatus(text, isError){
+  const el=document.getElementById("dlg_status");
+  el.textContent=text||"";
+  el.style.color = isError ? "var(--no)" : "var(--yes)";
+}
+
+async function createBitrixTasks(){
+  const tasks=window._pendingBitrixTasks||[];
+  if(!tasks.length) return;
+  const btn=document.getElementById("dlg_bitrix_btn");
+  btn.disabled=true; btn.textContent="Создаю…"; dlgStatus("");
+  try{
+    const r=await fetch("/api/checklist/bitrix-tasks",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","X-Telegram-Init-Data":initDataHeader()},
+      body:JSON.stringify({tasks})
+    });
+    const j=await r.json();
+    if(!r.ok){
+      dlgStatus(j.error==="bitrix_not_configured" ? "⚠️ Bitrix24 не настроен на сервере (нет BITRIX_WEBHOOK)" : "⚠️ Ошибка создания задач", true);
+      btn.disabled=false; btn.textContent="Создать задачи в Bitrix24";
+      return;
+    }
+    dlgStatus(`✅ Создано ${j.created} из ${j.total} задач в Bitrix24`, false);
+    btn.textContent=`Создано ${j.created}/${j.total} ✅`;
+  }catch(e){
+    dlgStatus("⚠️ Нет связи с сервером", true);
+    btn.disabled=false; btn.textContent="Создать задачи в Bitrix24";
+  }
+}
+
+/* ---------- завершение визита / история ---------- */
+async function submitVisit(){
+  if(!state.meta.city){ toast("Укажи город/объект перед сохранением"); return; }
+  try{
+    const r=await fetch("/api/checklist/submit",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","X-Telegram-Init-Data":initDataHeader()},
+      body:JSON.stringify({state})
+    });
+    if(!r.ok){ toast("Нет доступа или ошибка сохранения"); return; }
+    toast("Визит сохранён в историю ✅");
+  }catch(e){ toast("Не удалось сохранить — проверь связь"); }
+}
+
+async function showHistory(){
+  const list=document.getElementById("historyList");
+  list.innerHTML="Загрузка…";
+  dlgHistory.showModal();
+  try{
+    const r=await fetch("/api/checklist/history",{headers:{"X-Telegram-Init-Data":initDataHeader()}});
+    if(!r.ok){ list.innerHTML="Нет доступа"; return; }
+    const j=await r.json();
+    if(!j.visits.length){ list.innerHTML="Пока нет сохранённых визитов."; return; }
+    list.innerHTML="";
+    j.visits.forEach(v=>{
+      const dt=new Date(v.created_at*1000);
+      const el=document.createElement("div"); el.className="hist-item";
+      el.innerHTML=`<b>${esc(v.city||"—")}</b> · ${esc(v.dates||"—")}<div class="sub">${esc(v.author_name||"")} · ${dt.toLocaleDateString("ru-RU")}</div>`;
+      el.onclick=()=>openVisit(v.id);
+      list.appendChild(el);
+    });
+  }catch(e){ list.innerHTML="Ошибка загрузки"; }
+}
+async function openVisit(id){
+  try{
+    const r=await fetch("/api/checklist/visit/"+id,{headers:{"X-Telegram-Init-Data":initDataHeader()}});
+    const j=await r.json();
+    const dt=j.created_at ? new Date(j.created_at*1000).toLocaleString("ru-RU") : "";
+    const text=[`Визит от ${j.author_name||"—"} · ${dt}`, ...buildReportLines(j.data)].join("\n");
+    dlgHistory.close();
+    document.getElementById("dlg_bitrix_btn").style.display="none";
+    openDlg("Визит: "+(j.city||"—"), (j.dates||"")+" · "+(j.author_name||""), text);
+  }catch(e){ toast("Ошибка загрузки визита"); }
+}
+
+function openDlg(t,p,text){
+  document.getElementById("dlg_t").textContent=t;
+  document.getElementById("dlg_p").textContent=p;
+  document.getElementById("dlg_out").value=text;
+  dlgStatus("");
+  document.getElementById("dlg").showModal();
+}
+function copyOut(){
+  const t=document.getElementById("dlg_out"); t.select();
+  navigator.clipboard.writeText(t.value).then(()=>toast("Скопировано")).catch(()=>{document.execCommand("copy");toast("Скопировано")});
+}
+function clearAll(){ state={answers:{},comments:{},econ:{},degust:[],meta:{}}; save(); render(); }
+function toast(m){const t=document.getElementById("toast");t.textContent=m;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),1800);}
+const dlg=document.getElementById("dlg");
+const dlgHistory=document.getElementById("dlgHistory");
+
+function showNoAccess(){
+  document.querySelector("main").innerHTML =
+    '<div class="noaccess"><div class="emoji">🔒</div>'+
+    '<div class="title">Доступ не выдан</div>'+
+    '<div>Обратись к Веронике, чтобы тебя добавили в список ОД.</div></div>';
+  document.querySelector("footer").style.display="none";
+}
+
+async function initState(){
+  state = loadLocal() || {answers:{}, comments:{}, econ:{}, degust:[], meta:{}};
+  try{
+    const r = await fetch("/api/checklist/draft", {headers:{"X-Telegram-Init-Data": initDataHeader()}});
+    if(r.status===403){ showNoAccess(); return; }
+    if(r.ok){
+      const j = await r.json();
+      if(j.draft){ state = j.draft; }
+      myName = j.name || "";
+      document.getElementById("whoami").textContent = myName ? "Вы: "+myName : "";
+    }
+  }catch(e){ /* нет связи — работаем с локальным черновиком */ }
+  render();
+}
+initState();
+</script>
+</body>
+</html>
