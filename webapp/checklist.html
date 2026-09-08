@@ -224,6 +224,11 @@ try{
   if(window.Telegram && Telegram.WebApp){
     Telegram.WebApp.ready();
     Telegram.WebApp.expand();
+    // Без этого вертикальный скролл страницы на iOS распознаётся как системный
+    // жест "свайп вниз = закрыть/обновить" и мини-апп неожиданно перезапускается.
+    if (typeof Telegram.WebApp.disableVerticalSwipes === "function"){
+      Telegram.WebApp.disableVerticalSwipes();
+    }
   }
 }catch(e){}
 function initDataHeader(){
