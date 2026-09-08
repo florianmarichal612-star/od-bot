@@ -88,19 +88,12 @@ BTN_STATUS    = "📊 Статус"
 BTN_GENERATE  = "📝 Сгенерировать отчёт"
 BTN_CHECKLIST = "📋 Чек-лист визита"
 
-_checklist_url = f"{webapp_base_url()}/checklist" if webapp_base_url() else ""
-_checklist_button = (
-    KeyboardButton(BTN_CHECKLIST, web_app=WebAppInfo(url=_checklist_url))
-    if _checklist_url.startswith("https://")
-    else KeyboardButton(BTN_CHECKLIST)
-)
-
 OD_KEYBOARD = ReplyKeyboardMarkup(
     [
         [KeyboardButton(BTN_COLLECT), KeyboardButton(BTN_STATUS)],
         [KeyboardButton(BTN_ASK_TEAM)],
         [KeyboardButton(BTN_GENERATE)],
-        [_checklist_button],
+        [KeyboardButton(BTN_CHECKLIST)],
     ],
     resize_keyboard=True,
     is_persistent=True,
@@ -645,12 +638,29 @@ async def action_generate(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await do_generate(ctx.application)
 
 
-async def action_checklist_fallback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Срабатывает только если WEBAPP_URL не настроен — кнопка тогда шлёт обычный текст."""
-    await update.message.reply_text(
-        "Чек-лист временно недоступен: на сервере не настроен WEBAPP_URL "
-        "(или ещё не сгенерирован публичный домен на Railway)."
-    )
+async def cmd_checklist(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Открыть Mini App чек-листа визита — доступно любому разрешённому ОД, не только главному.
+
+    Кнопка отправляется в ОТВЕТНОМ СООБЩЕНИИ (InlineKeyboardButton), а не как
+    web_app-кнопка в персистентной ReplyKeyboardMarkup — на практике вторая
+    форма у части клиентов открывает страницу без initData (Telegram отдаёт
+    её как обычную ссылку, а не как настоящий запуск Mini App).
+    """
+    chat_id = update.effective_chat.id
+    if not is_checklist_user(chat_id):
+        await update.message.reply_text("Доступ к чек-листу визита не выдан. Обратись к Веронике.")
+        return
+    url = f"{webapp_base_url()}/checklist" if webapp_base_url() else ""
+    if not url.startswith("https://"):
+        await update.message.reply_text(
+            "Чек-лист временно недоступен: не настроен WEBAPP_URL "
+            "(или ещё не сгенерирован публичный домен на Railway)."
+        )
+        return
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("📋 Открыть чек-лист визита", web_app=WebAppInfo(url=url))
+    ]])
+    await update.message.reply_text("Чек-лист визита:", reply_markup=keyboard)
 
 
 # Мапа: текст кнопки → обработчик
@@ -659,26 +669,8 @@ MENU_ACTIONS = {
     BTN_ASK_TEAM: action_ask_team,
     BTN_STATUS:   action_status,
     BTN_GENERATE: action_generate,
-    BTN_CHECKLIST: action_checklist_fallback,
+    BTN_CHECKLIST: cmd_checklist,
 }
-
-
-async def cmd_checklist(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Открыть Mini App чек-листа визита — доступно любому разрешённому ОД, не только главному."""
-    chat_id = update.effective_chat.id
-    if not is_checklist_user(chat_id):
-        await update.message.reply_text("Доступ к чек-листу визита не выдан. Обратись к Веронике.")
-        return
-    url = f"{webapp_base_url()}/checklist" if webapp_base_url() else ""
-    if not url.startswith("https://"):
-        await update.message.reply_text(
-            "Чек-лист временно недоступен: не настроен WEBAPP_URL."
-        )
-        return
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("📋 Открыть чек-лист визита", web_app=WebAppInfo(url=url))
-    ]])
-    await update.message.reply_text("Чек-лист визита:", reply_markup=keyboard)
 
 
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
