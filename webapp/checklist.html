@@ -229,6 +229,11 @@ try{
     if (typeof Telegram.WebApp.disableVerticalSwipes === "function"){
       Telegram.WebApp.disableVerticalSwipes();
     }
+    // expand() разворачивает только до "половины" экрана — requestFullscreen()
+    // (если клиент его поддерживает) сразу открывает на весь экран без свайпа руками.
+    if (typeof Telegram.WebApp.requestFullscreen === "function"){
+      try{ Telegram.WebApp.requestFullscreen(); }catch(e){}
+    }
   }
 }catch(e){}
 function initDataHeader(){
