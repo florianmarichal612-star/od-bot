@@ -502,10 +502,22 @@ const dlg=document.getElementById("dlg");
 const dlgHistory=document.getElementById("dlgHistory");
 
 function showNoAccess(){
+  let diag = "";
+  try{
+    const tg = window.Telegram && window.Telegram.WebApp;
+    diag = tg
+      ? `bridge: да · initData: ${tg.initData ? tg.initData.length+" симв." : "пусто"} · `+
+        `platform: ${tg.platform||"?"} · version: ${tg.version||"?"} · `+
+        `unsafe.user: ${tg.initDataUnsafe && tg.initDataUnsafe.user ? "есть ("+tg.initDataUnsafe.user.id+")" : "нет"}`
+      : "bridge: window.Telegram.WebApp отсутствует (страница открыта не как Mini App)";
+  }catch(e){ diag = "ошибка диагностики: "+e; }
+
   document.querySelector("main").innerHTML =
     '<div class="noaccess"><div class="emoji">🔒</div>'+
     '<div class="title">Доступ не выдан</div>'+
-    '<div>Обратись к Веронике, чтобы тебя добавили в список ОД.</div></div>';
+    '<div>Обратись к Веронике, чтобы тебя добавили в список ОД.</div>'+
+    '<div style="margin-top:16px;font-size:11px;color:var(--grey);word-break:break-word;user-select:text">'+esc(diag)+'</div>'+
+    '</div>';
   document.querySelector("footer").style.display="none";
 }
 
