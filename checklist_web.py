@@ -57,7 +57,11 @@ def _authorized_user(request: web.Request) -> tuple[int, str] | None:
 
 async def handle_index(request: web.Request) -> web.Response:
     with open(HTML_PATH, encoding="utf-8") as f:
-        return web.Response(text=f.read(), content_type="text/html")
+        return web.Response(
+            text=f.read(),
+            content_type="text/html",
+            headers={"Cache-Control": "no-store, must-revalidate"},
+        )
 
 
 async def handle_get_draft(request: web.Request) -> web.Response:

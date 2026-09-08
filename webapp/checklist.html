@@ -229,6 +229,17 @@ try{
 function initDataHeader(){
   try{ return (window.Telegram && Telegram.WebApp && Telegram.WebApp.initData) || ""; }catch(e){ return ""; }
 }
+// На некоторых клиентах (в основном iOS) Telegram.WebApp.initData заполняется
+// не мгновенно, а с небольшой задержкой после загрузки страницы — ждём.
+async function waitForInitData(maxWaitMs){
+  const start = Date.now();
+  if (initDataHeader()) return true;
+  while (Date.now() - start < maxWaitMs){
+    await new Promise(r=>setTimeout(r, 100));
+    if (initDataHeader()) return true;
+  }
+  return false;
+}
 
 function loadLocal(){try{return JSON.parse(localStorage.getItem(KEY))}catch(e){return null}}
 function saveLocal(){try{localStorage.setItem(KEY,JSON.stringify(state))}catch(e){}}
@@ -523,6 +534,7 @@ function showNoAccess(){
 
 async function initState(){
   state = loadLocal() || {answers:{}, comments:{}, econ:{}, degust:[], meta:{}};
+  await waitForInitData(1500);
   try{
     const r = await fetch("/api/checklist/draft", {headers:{"X-Telegram-Init-Data": initDataHeader()}});
     if(r.status===403){ showNoAccess(); return; }
