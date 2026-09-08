@@ -88,25 +88,18 @@ BTN_STATUS    = "📊 Статус"
 BTN_GENERATE  = "📝 Сгенерировать отчёт"
 BTN_CHECKLIST = "📋 Чек-лист визита"
 
-# Пробуем открывать чек-лист сразу одним тапом (web_app прямо в кнопке
-# клавиатуры). Раньше это иногда открывалось без initData на части
-# клиентов — возможно, из-за кэша клавиатуры, отправленной ДО того, как
-# появился публичный домен. Теперь клавиатура пересобирается заново при
-# каждом запуске бота, домен уже стабилен — пробуем ещё раз. Если снова
-# сломается, есть надёжный запасной путь: команда /checklist.
-_checklist_url = f"{webapp_base_url()}/checklist" if webapp_base_url() else ""
-_checklist_button = (
-    KeyboardButton(BTN_CHECKLIST, web_app=WebAppInfo(url=_checklist_url))
-    if _checklist_url.startswith("https://")
-    else KeyboardButton(BTN_CHECKLIST)
-)
-
+# ПОДТВЕРЖДЕНО двумя чистыми тестами: web_app-кнопка прямо в персистентной
+# ReplyKeyboardMarkup открывает страницу без initData у части клиентов
+# Telegram на iOS (известная платформенная особенность). Та же кнопка,
+# отправленная в ОТВЕТНОМ СООБЩЕНИИ (InlineKeyboardButton), работает
+# стабильно — поэтому кнопка внизу шлёт обычный текст, а cmd_checklist
+# в ответ присылает рабочую inline-кнопку. См. MENU_ACTIONS ниже.
 OD_KEYBOARD = ReplyKeyboardMarkup(
     [
         [KeyboardButton(BTN_COLLECT), KeyboardButton(BTN_STATUS)],
         [KeyboardButton(BTN_ASK_TEAM)],
         [KeyboardButton(BTN_GENERATE)],
-        [_checklist_button],
+        [KeyboardButton(BTN_CHECKLIST)],
     ],
     resize_keyboard=True,
     is_persistent=True,
