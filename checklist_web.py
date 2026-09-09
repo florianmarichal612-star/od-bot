@@ -184,6 +184,10 @@ def build_web_app() -> web.Application:
     app.router.add_get("/api/checklist/visit/{visit_id}", handle_visit)
     app.router.add_post("/api/checklist/bitrix-tasks", handle_bitrix_tasks)
     app.router.add_get("/health", handle_health)
+
+    from dashboard_web import register_dashboard_routes
+    register_dashboard_routes(app)
+
     return app
 
 

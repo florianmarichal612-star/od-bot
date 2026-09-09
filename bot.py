@@ -21,6 +21,7 @@ import anthropic
 
 from checklist_config import is_checklist_user, webapp_base_url
 from checklist_web import start_web_server
+from dashboard_web import DASHBOARD_USERS
 
 # ─────────────────────────────────────────────
 # НАСТРОЙКИ (берутся из переменных окружения)
@@ -87,19 +88,20 @@ BTN_ASK_TEAM  = "📤 Запросить отчёты"
 BTN_STATUS    = "📊 Статус"
 BTN_GENERATE  = "📝 Сгенерировать отчёт"
 BTN_CHECKLIST = "📋 Чек-лист визита"
+BTN_DASHBOARD = "📊 План/Факт"
 
 # ПОДТВЕРЖДЕНО двумя чистыми тестами: web_app-кнопка прямо в персистентной
 # ReplyKeyboardMarkup открывает страницу без initData у части клиентов
 # Telegram на iOS (известная платформенная особенность). Та же кнопка,
 # отправленная в ОТВЕТНОМ СООБЩЕНИИ (InlineKeyboardButton), работает
-# стабильно — поэтому кнопка внизу шлёт обычный текст, а cmd_checklist
-# в ответ присылает рабочую inline-кнопку. См. MENU_ACTIONS ниже.
+# стабильно — поэтому кнопки внизу шлют обычный текст, а обработчики
+# в ответ присылают рабочую inline-кнопку. См. MENU_ACTIONS ниже.
 OD_KEYBOARD = ReplyKeyboardMarkup(
     [
         [KeyboardButton(BTN_COLLECT), KeyboardButton(BTN_STATUS)],
         [KeyboardButton(BTN_ASK_TEAM)],
         [KeyboardButton(BTN_GENERATE)],
-        [KeyboardButton(BTN_CHECKLIST)],
+        [KeyboardButton(BTN_CHECKLIST), KeyboardButton(BTN_DASHBOARD)],
     ],
     resize_keyboard=True,
     is_persistent=True,
@@ -669,6 +671,26 @@ async def cmd_checklist(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Чек-лист визита:", reply_markup=keyboard)
 
 
+async def cmd_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Открыть Mini App план/факт по сети. Отдельный список доступа от чек-листа —
+    это данные по выручке всех 4 брендов, а не по одной точке."""
+    chat_id = update.effective_chat.id
+    if not (chat_id == OD_CHAT_ID or chat_id in DASHBOARD_USERS):
+        await update.message.reply_text("Доступ к дашборду план/факт не выдан. Обратись к Веронике.")
+        return
+    url = f"{webapp_base_url()}/dashboard" if webapp_base_url() else ""
+    if not url.startswith("https://"):
+        await update.message.reply_text(
+            "Дашборд временно недоступен: не настроен WEBAPP_URL "
+            "(или ещё не сгенерирован публичный домен на Railway)."
+        )
+        return
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("📊 Открыть план/факт", web_app=WebAppInfo(url=url))
+    ]])
+    await update.message.reply_text("План/факт по сети:", reply_markup=keyboard)
+
+
 # Мапа: текст кнопки → обработчик
 MENU_ACTIONS = {
     BTN_COLLECT:  action_collect,
@@ -676,6 +698,7 @@ MENU_ACTIONS = {
     BTN_STATUS:   action_status,
     BTN_GENERATE: action_generate,
     BTN_CHECKLIST: cmd_checklist,
+    BTN_DASHBOARD: cmd_dashboard,
 }
 
 
@@ -847,6 +870,7 @@ async def async_main():
     app.add_handler(CommandHandler("status",    cmd_status_alias))
     app.add_handler(CommandHandler("generate",  cmd_generate_alias))
     app.add_handler(CommandHandler("checklist", cmd_checklist))
+    app.add_handler(CommandHandler("dashboard", cmd_dashboard))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT | filters.VOICE, handle_message))
 

@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>План / Факт · Хачапури Марико</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root{
+    --terracotta:#C15A3A; --burgundy:#7A2E39; --teal:#1F6E6A; --orange:#E08A2E;
+    --cream:#FBF4EC; --ink:#2B2622; --grey:#8A8177; --line:#E7DBCC; --card:#FFFFFF;
+    --good:#1F6E6A; --bad:#C1443A; --track:#EFE4D4;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:var(--cream);color:var(--ink);
+    font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+    padding-bottom:40px}
+  header{position:sticky;top:0;z-index:20;background:var(--burgundy);color:#fff;
+    padding:calc(14px + env(safe-area-inset-top)) 16px 12px;box-shadow:0 2px 10px rgba(0,0,0,.12)}
+  header h1{margin:0;font-size:17px;font-weight:800;letter-spacing:.2px}
+  header p{margin:2px 0 0;font-size:12px;opacity:.8}
+  #whoami{opacity:.9;font-weight:600}
+  main{max-width:720px;margin:0 auto;padding:14px 12px}
+
+  .total{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+  .total .lbl{font-size:11px;font-weight:700;color:var(--grey);text-transform:uppercase;letter-spacing:.4px}
+  .total .nums{display:flex;align-items:baseline;gap:8px;margin-top:6px;flex-wrap:wrap}
+  .total .proj{font-size:26px;font-weight:800}
+  .total .plan{font-size:14px;color:var(--grey)}
+  .total .pct{font-size:14px;font-weight:800;padding:2px 9px;border-radius:20px;margin-left:auto}
+  .pct.good{background:rgba(31,110,106,.12);color:var(--good)}
+  .pct.bad{background:rgba(193,68,58,.12);color:var(--bad)}
+  .bar{height:8px;background:var(--track);border-radius:5px;margin-top:12px;overflow:hidden}
+  .bar > i{display:block;height:100%;border-radius:5px}
+
+  details{background:var(--card);border:1px solid var(--line);border-radius:14px;margin-bottom:12px;overflow:hidden}
+  summary{list-style:none;cursor:pointer;padding:13px 14px;display:flex;align-items:center;gap:10px;
+    font-weight:800;font-size:15px;color:#fff;background:var(--teal)}
+  summary::-webkit-details-marker{display:none}
+  summary .chev{margin-left:auto;transition:transform .2s;opacity:.85;font-size:13px}
+  details[open] summary .chev{transform:rotate(90deg)}
+  summary .badge{font-size:12px;font-weight:700;padding:2px 9px;border-radius:20px}
+  summary .badge.good{background:rgba(255,255,255,.24);color:#fff}
+  summary .badge.bad{background:rgba(0,0,0,.22);color:#fff}
+
+  .point{padding:11px 14px;border-top:1px solid var(--line)}
+  .point .row1{display:flex;align-items:baseline;gap:8px}
+  .point .name{font-weight:700;font-size:14.5px}
+  .point .pct{margin-left:auto;font-size:13px;font-weight:800}
+  .point .pct.good{color:var(--good)} .point .pct.bad{color:var(--bad)}
+  .point .row2{font-size:12.5px;color:var(--grey);margin-top:2px}
+  .point .bar{height:6px;margin-top:8px}
+
+  .updated{text-align:center;font-size:12px;color:var(--grey);margin-top:6px}
+  .noaccess{text-align:center;padding:60px 16px;color:var(--grey)}
+  .noaccess .emoji{font-size:40px;margin-bottom:12px}
+  .noaccess .title{font-weight:700;color:var(--ink);margin-bottom:6px}
+  .empty{text-align:center;padding:60px 16px;color:var(--grey)}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>План / Факт</h1>
+  <p>«Хачапури Марико» и сеть · прогноз на месяц по данным на утро</p>
+  <p id="whoami"></p>
+</header>
+
+<main id="main">
+  <div class="empty">Загрузка…</div>
+</main>
+
+<script>
+const BRAND_ORDER = ["Марико", "Джани", "Корчма", "Кофекейк"];
+
+try{
+  if(window.Telegram && Telegram.WebApp){
+    const tg = Telegram.WebApp;
+    tg.ready();
+    tg.expand();
+    if (typeof tg.disableVerticalSwipes === "function") tg.disableVerticalSwipes();
+    function applySafeArea(){
+      try{
+        const device = (tg.safeAreaInset && tg.safeAreaInset.top) || 0;
+        const chrome = (tg.contentSafeAreaInset && tg.contentSafeAreaInset.top) || 0;
+        const header = document.querySelector("header");
+        if (header) header.style.paddingTop = (14 + device + chrome) + "px";
+      }catch(e){}
+    }
+    if (typeof tg.onEvent === "function"){
+      tg.onEvent("contentSafeAreaChanged", applySafeArea);
+      tg.onEvent("safeAreaChanged", applySafeArea);
+      tg.onEvent("fullscreenChanged", applySafeArea);
+    }
+    applySafeArea();
+    if (typeof tg.requestFullscreen === "function"){ try{ tg.requestFullscreen(); }catch(e){} }
+  }
+}catch(e){}
+
+function initDataHeader(){
+  try{ return (window.Telegram && Telegram.WebApp && Telegram.WebApp.initData) || ""; }catch(e){ return ""; }
+}
+async function waitForInitData(maxWaitMs){
+  const start = Date.now();
+  if (initDataHeader()) return true;
+  while (Date.now() - start < maxWaitMs){
+    await new Promise(r=>setTimeout(r, 100));
+    if (initDataHeader()) return true;
+  }
+  return false;
+}
+
+function esc(s){return (s||"").toString().replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
+function fmt(n){return Math.round(n).toLocaleString("ru-RU")}
+function pctStr(p){const v=(p*100).toFixed(1); return (p>=0?"+":"")+v+"%"}
+function barWidth(projected, plan){
+  if (!plan || plan<=0) return 0;
+  return Math.max(2, Math.min(150, (projected/plan*100)));
+}
+
+function showNoAccess(){
+  let diag = "";
+  try{
+    const tg = window.Telegram && window.Telegram.WebApp;
+    diag = tg
+      ? `bridge: да · initData: ${tg.initData ? tg.initData.length+" симв." : "пусто"} · platform: ${tg.platform||"?"}`
+      : "bridge: window.Telegram.WebApp отсутствует";
+  }catch(e){ diag = "ошибка диагностики: "+e; }
+  document.getElementById("main").innerHTML =
+    '<div class="noaccess"><div class="emoji">🔒</div>'+
+    '<div class="title">Доступ не выдан</div>'+
+    '<div>Обратись к Веронике, чтобы тебя добавили в список.</div>'+
+    '<div style="margin-top:16px;font-size:11px;color:var(--grey);word-break:break-word;user-select:text">'+esc(diag)+'</div>'+
+    '</div>';
+}
+
+function render(payload){
+  const rows = payload.rows || [];
+  const main = document.getElementById("main");
+  if (!rows.length){
+    main.innerHTML = '<div class="empty">Пока нет данных плана. Проверь лист «Отчёт» в таблице.</div>';
+    return;
+  }
+
+  const byBrand = {};
+  rows.forEach(r=>{
+    const brand = r["Бренд"] || "—";
+    (byBrand[brand] = byBrand[brand] || []).push(r);
+  });
+
+  let totalPlan = 0, totalProj = 0;
+  rows.forEach(r=>{ totalPlan += Number(r["План"])||0; totalProj += Number(r["Прогноз"])||0; });
+  const totalPct = totalPlan>0 ? (totalProj/totalPlan - 1) : 0;
+  const totalGood = totalProj >= totalPlan;
+
+  let html = `<div class="total">
+    <div class="lbl">Прогноз на месяц по сети</div>
+    <div class="nums">
+      <div class="proj">${fmt(totalProj)} ₽</div>
+      <div class="plan">план ${fmt(totalPlan)} ₽</div>
+      <div class="pct ${totalGood?'good':'bad'}">${pctStr(totalPct)}</div>
+    </div>
+    <div class="bar"><i style="width:${Math.min(100,barWidth(totalProj,totalPlan))}%;background:${totalGood?'var(--good)':'var(--bad)'}"></i></div>
+  </div>`;
+
+  const brands = Object.keys(byBrand).sort((a,b)=>{
+    const ai = BRAND_ORDER.indexOf(a), bi = BRAND_ORDER.indexOf(b);
+    return (ai<0?99:ai) - (bi<0?99:bi);
+  });
+
+  brands.forEach((brand, bi)=>{
+    const list = byBrand[brand].slice().sort((a,b)=>(a["Точка"]||"").localeCompare(b["Точка"]||"","ru"));
+    let bPlan=0, bProj=0;
+    list.forEach(r=>{ bPlan+=Number(r["План"])||0; bProj+=Number(r["Прогноз"])||0; });
+    const bPct = bPlan>0 ? (bProj/bPlan - 1) : 0;
+    const bGood = bProj >= bPlan;
+
+    html += `<details ${bi===0?"open":""}>
+      <summary><span>${esc(brand)}</span><span class="badge ${bGood?'good':'bad'}">${pctStr(bPct)}</span><span class="chev">▶</span></summary>`;
+
+    list.forEach(r=>{
+      const plan = Number(r["План"])||0;
+      const proj = Number(r["Прогноз"])||0;
+      const pct = plan>0 ? (proj/plan - 1) : 0;
+      const good = proj >= plan;
+      html += `<div class="point">
+        <div class="row1"><span class="name">${esc(r["Точка"]||"—")}</span><span class="pct ${good?'good':'bad'}">${pctStr(pct)}</span></div>
+        <div class="row2">${fmt(proj)} ₽ из ${fmt(plan)} ₽ плана</div>
+        <div class="bar"><i style="width:${Math.min(100,barWidth(proj,plan))}%;background:${good?'var(--good)':'var(--bad)'}"></i></div>
+      </div>`;
+    });
+    html += `</details>`;
+  });
+
+  if (payload.updated_at){
+    const d = new Date(payload.updated_at);
+    html += `<div class="updated">Обновлено: ${d.toLocaleString("ru-RU")}</div>`;
+  }
+
+  main.innerHTML = html;
+}
+
+async function init(){
+  await waitForInitData(1500);
+  let myName = "";
+  try{
+    const r = await fetch("/api/dashboard/data", {headers:{"X-Telegram-Init-Data": initDataHeader()}});
+    if (r.status===403){ showNoAccess(); return; }
+    if (!r.ok){ document.getElementById("main").innerHTML = '<div class="empty">Не удалось загрузить данные. Попробуй позже.</div>'; return; }
+    const j = await r.json();
+    myName = j.name || "";
+    document.getElementById("whoami").textContent = myName ? "Вы: "+myName : "";
+    render(j);
+  }catch(e){
+    document.getElementById("main").innerHTML = '<div class="empty">Нет связи с сервером.</div>';
+  }
+}
+init();
+</script>
+</body>
+</html>
