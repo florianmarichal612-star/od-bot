@@ -363,13 +363,19 @@ function render(payload){
       const planAvgCheck = Number(r["ПланСрЧек"])||0;
       const lastYear = r["ПрошлыйГод"];
       const yoyPct = r["ДинамикаГод"];
+      const lastYearChecks = r["ПрошлыйГодЧеков"];
+      const yoyChecksPct = r["ДинамикаГодЧеков"];
 
       const factLine = (revenueFact!=null)
         ? `<div class="row2">Факт${payload.data_date?' на '+formatDataDate(payload.data_date):''}: ${fmtCur(revenueFact,kzt)}</div>`
         : "";
 
       const yoyLine = (lastYear!=null && yoyPct!=null)
-        ? `<div class="row2">Год к году: <b style="color:${yoyPct>=0?'var(--good)':'var(--bad)'}">${pctStr(yoyPct)}</b> (сентябрь 2025: ${fmtCur(lastYear,kzt)})</div>`
+        ? `<div class="row2">Год к году (выручка): <b style="color:${yoyPct>=0?'var(--good)':'var(--bad)'}">${pctStr(yoyPct)}</b> (сентябрь 2025: ${fmtCur(lastYear,kzt)})</div>`
+        : "";
+
+      const yoyChecksLine = (lastYearChecks!=null && yoyChecksPct!=null)
+        ? `<div class="row2">Год к году (чеки): <b style="color:${yoyChecksPct>=0?'var(--good)':'var(--bad)'}">${pctStr(yoyChecksPct)}</b> (сентябрь 2025: ${fmt(lastYearChecks)} чеков)</div>`
         : "";
 
       let checksLine = "";
@@ -387,6 +393,7 @@ function render(payload){
         }
         checksLine += `<div class="row2">${line}</div>`;
       }
+      checksLine += yoyChecksLine;
       html += `<div class="point">
         <div class="row1"><span class="name">${esc(r["Точка"]||"—")}</span><span class="pct ${good?'good':'bad'}">${pctStr(pct)}</span></div>
         ${factLine}
