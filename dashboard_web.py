@@ -28,6 +28,12 @@ PLAN_FACT_PROXY_URL = os.environ.get(
 CHECKS_PROXY_URL = os.environ.get(
     "CHECKS_PROXY_URL", "https://flow.rfk.su/webhook/od-bot-checks-mtd"
 )
+# Отдельный лёгкий вебхук для наценки (Department-группировка, без
+# order-level детализации) — сознательно отделён от CHECKS_PROXY_URL:
+# объединение наценки в тот же тяжёлый воркфлоу роняло его по памяти (OOM).
+MARGIN_PROXY_URL = os.environ.get(
+    "MARGIN_PROXY_URL", "https://flow.rfk.su/webhook/od-bot-margin"
+)
 DEV_MODE = os.environ.get("CHECKLIST_DEV_MODE", "") == "1"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -109,9 +115,10 @@ async def handle_data(request: web.Request) -> web.Response:
     _, name = auth
 
     async with httpx.AsyncClient(timeout=45) as client:
-        plan_fact, checks = await asyncio.gather(
+        plan_fact, checks, margin = await asyncio.gather(
             _fetch_json(client, PLAN_FACT_PROXY_URL),
             _fetch_json(client, CHECKS_PROXY_URL),
+            _fetch_json(client, MARGIN_PROXY_URL),
         )
 
     if plan_fact is None:
@@ -122,6 +129,12 @@ async def handle_data(request: web.Request) -> web.Response:
         for row in checks.get("rows", []):
             key = (row.get("brand", ""), row.get("point", ""))
             checks_by_key[key] = row
+
+    margin_by_key: dict[tuple[str, str], dict] = {}
+    if margin:
+        for row in margin.get("rows", []):
+            key = (row.get("brand", ""), row.get("point", ""))
+            margin_by_key[key] = row
 
     for row in plan_fact.get("rows", []):
         key = (row.get("Бренд", ""), row.get("Точка", ""))
@@ -137,6 +150,9 @@ async def handle_data(request: web.Request) -> web.Response:
             row["ДинамикаГод"] = match.get("yoy_pct")
             row["ПрошлыйГодЧеков"] = match.get("last_year_checks")
             row["ДинамикаГодЧеков"] = match.get("yoy_checks_pct")
+        margin_match = margin_by_key.get(key)
+        if margin_match:
+            row["Наценка"] = margin_match.get("margin_pct")
 
     plan_fact["name"] = name
     plan_fact["checks_available"] = checks is not None

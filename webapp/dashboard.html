@@ -365,9 +365,14 @@ function render(payload){
       const yoyPct = r["ДинамикаГод"];
       const lastYearChecks = r["ПрошлыйГодЧеков"];
       const yoyChecksPct = r["ДинамикаГодЧеков"];
+      const margin = r["Наценка"];
 
       const factLine = (revenueFact!=null)
         ? `<div class="row2">Факт${payload.data_date?' на '+formatDataDate(payload.data_date):''}: ${fmtCur(revenueFact,kzt)}</div>`
+        : "";
+
+      const marginLine = (margin!=null)
+        ? `<div class="row2">Наценка: ${margin.toFixed(0)}%</div>`
         : "";
 
       const yoyLine = (lastYear!=null && yoyPct!=null)
@@ -397,6 +402,7 @@ function render(payload){
       html += `<div class="point">
         <div class="row1"><span class="name">${esc(r["Точка"]||"—")}</span><span class="pct ${good?'good':'bad'}">${pctStr(pct)}</span></div>
         ${factLine}
+        ${marginLine}
         <div class="row2">Прогноз на месяц: ${fmtCur(proj,kzt)} из ${fmtCur(plan,kzt)} плана</div>
         ${yoyLine}
         ${checksLine}
