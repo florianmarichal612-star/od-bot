@@ -258,6 +258,10 @@ async function waitForInitData(maxWaitMs){
 function esc(s){return (s||"").toString().replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
 function fmt(n){return Math.round(n).toLocaleString("ru-RU")}
 function pctStr(p){const v=(p*100).toFixed(1); return (p>=0?"+":"")+v+"%"}
+// Астана и Атырау считаются везде в рублёвом эквиваленте (курс /5) для
+// сведения сети в одну валюту — но на экране показываем как есть, в тенге.
+function isKzt(brand, point){ return brand==="Марико" && (point==="Астана" || point==="Атырау"); }
+function fmtCur(n, kzt){ const v = kzt ? n*5 : n; return fmt(v) + " " + (kzt ? "₸" : "₽"); }
 function formatDataDate(iso){
   if(!iso) return "";
   const parts=iso.split("-");
@@ -346,6 +350,7 @@ function render(payload){
       <summary><span>${esc(brand)}</span><span class="badge ${bGood?'good':'bad'}">${pctStr(bPct)}</span><span class="chev">▶</span></summary>`;
 
     list.forEach(r=>{
+      const kzt = isKzt(brand, r["Точка"]);
       const plan = Number(r["План"])||0;
       const proj = Number(r["Прогноз"])||0;
       const pct = plan>0 ? (proj/plan - 1) : 0;
@@ -356,15 +361,21 @@ function render(payload){
       const planChecks = Number(r["ПланЧеков"])||0;
       const forecastChecks = r["ПрогнозЧеков"];
       const planAvgCheck = Number(r["ПланСрЧек"])||0;
+      const lastYear = r["ПрошлыйГод"];
+      const yoyPct = r["ДинамикаГод"];
 
       const factLine = (revenueFact!=null)
-        ? `<div class="row2">Факт${payload.data_date?' на '+formatDataDate(payload.data_date):''}: ${fmt(revenueFact)} ₽</div>`
+        ? `<div class="row2">Факт${payload.data_date?' на '+formatDataDate(payload.data_date):''}: ${fmtCur(revenueFact,kzt)}</div>`
+        : "";
+
+      const yoyLine = (lastYear!=null && yoyPct!=null)
+        ? `<div class="row2">Год к году: <b style="color:${yoyPct>=0?'var(--good)':'var(--bad)'}">${pctStr(yoyPct)}</b> (сентябрь 2025: ${fmtCur(lastYear,kzt)})</div>`
         : "";
 
       let checksLine = "";
       if (avgCheck!=null){
-        let line = `Ср. чек ${fmt(avgCheck)} ₽`;
-        if (planAvgCheck>0) line += ` из ${fmt(planAvgCheck)} ₽ плана (${pctStr(avgCheck/planAvgCheck-1)})`;
+        let line = `Ср. чек ${fmtCur(avgCheck,kzt)}`;
+        if (planAvgCheck>0) line += ` из ${fmtCur(planAvgCheck,kzt)} плана (${pctStr(avgCheck/planAvgCheck-1)})`;
         checksLine += `<div class="row2">${line}</div>`;
       }
       if (checks!=null){
@@ -379,7 +390,8 @@ function render(payload){
       html += `<div class="point">
         <div class="row1"><span class="name">${esc(r["Точка"]||"—")}</span><span class="pct ${good?'good':'bad'}">${pctStr(pct)}</span></div>
         ${factLine}
-        <div class="row2">Прогноз на месяц: ${fmt(proj)} ₽ из ${fmt(plan)} ₽ плана</div>
+        <div class="row2">Прогноз на месяц: ${fmtCur(proj,kzt)} из ${fmtCur(plan,kzt)} плана</div>
+        ${yoyLine}
         ${checksLine}
         <div class="bar"><i style="width:${Math.min(100,barWidth(proj,plan))}%;background:${good?'var(--good)':'var(--bad)'}"></i></div>
       </div>`;
