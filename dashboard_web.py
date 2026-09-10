@@ -120,6 +120,9 @@ async def handle_data(request: web.Request) -> web.Response:
             row["Чеки"] = match.get("checks")
             row["СрЧек"] = match.get("avg_check")
             row["ВыручкаФакт"] = match.get("revenue_mtd")
+            row["ПланЧеков"] = match.get("plan_checks")
+            row["ПрогнозЧеков"] = match.get("forecast_checks")
+            row["ПланСрЧек"] = match.get("plan_avg_check")
 
     plan_fact["name"] = name
     plan_fact["checks_available"] = checks is not None

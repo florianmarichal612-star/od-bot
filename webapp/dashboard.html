@@ -185,9 +185,25 @@ function render(payload){
       const good = proj >= plan;
       const checks = r["Чеки"];
       const avgCheck = r["СрЧек"];
-      const checksLine = (checks!=null && avgCheck!=null)
-        ? `<div class="row2">Ср. чек ${fmt(avgCheck)} ₽ · чеков за месяц ${fmt(checks)}</div>`
-        : "";
+      const planChecks = Number(r["ПланЧеков"])||0;
+      const forecastChecks = r["ПрогнозЧеков"];
+      const planAvgCheck = Number(r["ПланСрЧек"])||0;
+
+      let checksLine = "";
+      if (avgCheck!=null){
+        let line = `Ср. чек ${fmt(avgCheck)} ₽`;
+        if (planAvgCheck>0) line += ` из ${fmt(planAvgCheck)} ₽ плана (${pctStr(avgCheck/planAvgCheck-1)})`;
+        checksLine += `<div class="row2">${line}</div>`;
+      }
+      if (checks!=null){
+        let line;
+        if (planChecks>0 && forecastChecks!=null){
+          line = `Чеков: прогноз ${fmt(forecastChecks)} из ${fmt(planChecks)} плана (${pctStr(forecastChecks/planChecks-1)})`;
+        } else {
+          line = `Чеков за месяц: ${fmt(checks)}`;
+        }
+        checksLine += `<div class="row2">${line}</div>`;
+      }
       html += `<div class="point">
         <div class="row1"><span class="name">${esc(r["Точка"]||"—")}</span><span class="pct ${good?'good':'bad'}">${pctStr(pct)}</span></div>
         <div class="row2">${fmt(proj)} ₽ из ${fmt(plan)} ₽ плана</div>
