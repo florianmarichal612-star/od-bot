@@ -6,6 +6,7 @@ Google Sheets, куда раз в день пишет workflow «Ежеднев�
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 
@@ -20,6 +21,12 @@ log = logging.getLogger(__name__)
 BOT_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 PLAN_FACT_PROXY_URL = os.environ.get(
     "PLAN_FACT_PROXY_URL", "https://flow.rfk.su/webhook/od-bot-plan-fact"
+)
+# Живой запрос к iiko по всем 4 брендам (для среднего чека и кол-ва чеков) —
+# в отличие от план/факта, тут нет дневного кеша, считается при каждом
+# открытии дашборда. Из-за живого iiko-запроса может занимать до ~40 сек.
+CHECKS_PROXY_URL = os.environ.get(
+    "CHECKS_PROXY_URL", "https://flow.rfk.su/webhook/od-bot-checks-mtd"
 )
 DEV_MODE = os.environ.get("CHECKLIST_DEV_MODE", "") == "1"
 
@@ -75,21 +82,48 @@ async def handle_index(request: web.Request) -> web.Response:
         )
 
 
+async def _fetch_json(client: httpx.AsyncClient, url: str) -> dict | None:
+    try:
+        r = await client.get(url)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        log.error(f"proxy fetch failed ({url}): {e}", exc_info=True)
+        return None
+
+
 async def handle_data(request: web.Request) -> web.Response:
     auth = _authorized_user(request)
     if not auth:
         return web.json_response({"error": "unauthorized"}, status=403)
     _, name = auth
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            r = await client.get(PLAN_FACT_PROXY_URL)
-            r.raise_for_status()
-            payload = r.json()
-    except Exception as e:
-        log.error(f"plan/fact proxy error: {e}", exc_info=True)
+
+    async with httpx.AsyncClient(timeout=45) as client:
+        plan_fact, checks = await asyncio.gather(
+            _fetch_json(client, PLAN_FACT_PROXY_URL),
+            _fetch_json(client, CHECKS_PROXY_URL),
+        )
+
+    if plan_fact is None:
         return web.json_response({"error": "upstream_failed"}, status=502)
-    payload["name"] = name
-    return web.json_response(payload)
+
+    checks_by_key: dict[tuple[str, str], dict] = {}
+    if checks:
+        for row in checks.get("rows", []):
+            key = (row.get("brand", ""), row.get("point", ""))
+            checks_by_key[key] = row
+
+    for row in plan_fact.get("rows", []):
+        key = (row.get("Бренд", ""), row.get("Точка", ""))
+        match = checks_by_key.get(key)
+        if match:
+            row["Чеки"] = match.get("checks")
+            row["СрЧек"] = match.get("avg_check")
+            row["ВыручкаФакт"] = match.get("revenue_mtd")
+
+    plan_fact["name"] = name
+    plan_fact["checks_available"] = checks is not None
+    return web.json_response(plan_fact)
 
 
 def register_dashboard_routes(app: web.Application):

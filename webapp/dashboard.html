@@ -67,7 +67,7 @@
 </header>
 
 <main id="main">
-  <div class="empty">Загрузка…</div>
+  <div class="empty">Загрузка… средний чек считается напрямую из iiko, может занять до 30 сек</div>
 </main>
 
 <script>
@@ -183,9 +183,15 @@ function render(payload){
       const proj = Number(r["Прогноз"])||0;
       const pct = plan>0 ? (proj/plan - 1) : 0;
       const good = proj >= plan;
+      const checks = r["Чеки"];
+      const avgCheck = r["СрЧек"];
+      const checksLine = (checks!=null && avgCheck!=null)
+        ? `<div class="row2">Ср. чек ${fmt(avgCheck)} ₽ · чеков за месяц ${fmt(checks)}</div>`
+        : "";
       html += `<div class="point">
         <div class="row1"><span class="name">${esc(r["Точка"]||"—")}</span><span class="pct ${good?'good':'bad'}">${pctStr(pct)}</span></div>
         <div class="row2">${fmt(proj)} ₽ из ${fmt(plan)} ₽ плана</div>
+        ${checksLine}
         <div class="bar"><i style="width:${Math.min(100,barWidth(proj,plan))}%;background:${good?'var(--good)':'var(--bad)'}"></i></div>
       </div>`;
     });
@@ -195,6 +201,9 @@ function render(payload){
   if (payload.updated_at){
     const d = new Date(payload.updated_at);
     html += `<div class="updated">Обновлено: ${d.toLocaleString("ru-RU")}</div>`;
+  }
+  if (payload.checks_available === false){
+    html += `<div class="updated">⚠️ Средний чек и кол-во чеков сейчас не загрузились (iiko не ответил) — попробуй обновить позже</div>`;
   }
 
   main.innerHTML = html;
