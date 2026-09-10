@@ -136,6 +136,8 @@ async def handle_data(request: web.Request) -> web.Response:
 
     plan_fact["name"] = name
     plan_fact["checks_available"] = checks is not None
+    if checks and checks.get("data_date"):
+        plan_fact["data_date"] = checks["data_date"]
     return web.json_response(plan_fact)
 
 
