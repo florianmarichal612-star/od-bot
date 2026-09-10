@@ -306,10 +306,18 @@ function render(payload){
     (byBrand[brand] = byBrand[brand] || []).push(r);
   });
 
-  let totalPlan = 0, totalProj = 0;
-  rows.forEach(r=>{ totalPlan += Number(r["План"])||0; totalProj += Number(r["Прогноз"])||0; });
+  let totalPlan = 0, totalProj = 0, totalFact = 0, totalFactKnown = true;
+  rows.forEach(r=>{
+    totalPlan += Number(r["План"])||0;
+    totalProj += Number(r["Прогноз"])||0;
+    if (r["ВыручкаФакт"]!=null) totalFact += Number(r["ВыручкаФакт"])||0;
+    else totalFactKnown = false;
+  });
   const totalPct = totalPlan>0 ? (totalProj/totalPlan - 1) : 0;
   const totalGood = totalProj >= totalPlan;
+  const totalFactLine = totalFactKnown
+    ? `<div class="lbl" style="margin-top:2px">Факт${payload.data_date?' на '+formatDataDate(payload.data_date):''}: ${fmt(totalFact)} ₽</div>`
+    : "";
 
   let html = `<div class="total">
     <div class="lbl">Прогноз на месяц по сети</div>
@@ -319,6 +327,7 @@ function render(payload){
       <div class="pct ${totalGood?'good':'bad'}">${pctStr(totalPct)}</div>
     </div>
     <div class="bar"><i style="width:${Math.min(100,barWidth(totalProj,totalPlan))}%;background:${totalGood?'var(--good)':'var(--bad)'}"></i></div>
+    ${totalFactLine}
   </div>`;
 
   const brands = Object.keys(byBrand).sort((a,b)=>{
@@ -343,9 +352,14 @@ function render(payload){
       const good = proj >= plan;
       const checks = r["Чеки"];
       const avgCheck = r["СрЧек"];
+      const revenueFact = r["ВыручкаФакт"];
       const planChecks = Number(r["ПланЧеков"])||0;
       const forecastChecks = r["ПрогнозЧеков"];
       const planAvgCheck = Number(r["ПланСрЧек"])||0;
+
+      const factLine = (revenueFact!=null)
+        ? `<div class="row2">Факт${payload.data_date?' на '+formatDataDate(payload.data_date):''}: ${fmt(revenueFact)} ₽</div>`
+        : "";
 
       let checksLine = "";
       if (avgCheck!=null){
@@ -364,7 +378,8 @@ function render(payload){
       }
       html += `<div class="point">
         <div class="row1"><span class="name">${esc(r["Точка"]||"—")}</span><span class="pct ${good?'good':'bad'}">${pctStr(pct)}</span></div>
-        <div class="row2">${fmt(proj)} ₽ из ${fmt(plan)} ₽ плана</div>
+        ${factLine}
+        <div class="row2">Прогноз на месяц: ${fmt(proj)} ₽ из ${fmt(plan)} ₽ плана</div>
         ${checksLine}
         <div class="bar"><i style="width:${Math.min(100,barWidth(proj,plan))}%;background:${good?'var(--good)':'var(--bad)'}"></i></div>
       </div>`;
