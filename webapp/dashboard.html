@@ -366,14 +366,20 @@ function render(payload){
       const lastYearChecks = r["ПрошлыйГодЧеков"];
       const yoyChecksPct = r["ДинамикаГодЧеков"];
       const margin = r["Наценка"];
+      const marginKitchen = r["НаценкаКухня"];
+      const marginBar = r["НаценкаБар"];
 
       const factLine = (revenueFact!=null)
         ? `<div class="row2">Факт${payload.data_date?' на '+formatDataDate(payload.data_date):''}: ${fmtCur(revenueFact,kzt)}</div>`
         : "";
 
-      const marginLine = (margin!=null)
-        ? `<div class="row2">Наценка: ${margin.toFixed(0)}%</div>`
-        : "";
+      let marginLine = "";
+      if (margin!=null){
+        let parts = [`общая ${margin.toFixed(0)}%`];
+        if (marginKitchen!=null) parts.push(`кухня ${marginKitchen.toFixed(0)}%`);
+        if (marginBar!=null) parts.push(`бар ${marginBar.toFixed(0)}%`);
+        marginLine = `<div class="row2">Наценка: ${parts.join(" · ")}</div>`;
+      }
 
       const yoyLine = (lastYear!=null && yoyPct!=null)
         ? `<div class="row2">Год к году (выручка): <b style="color:${yoyPct>=0?'var(--good)':'var(--bad)'}">${pctStr(yoyPct)}</b> (сентябрь 2025: ${fmtCur(lastYear,kzt)})</div>`

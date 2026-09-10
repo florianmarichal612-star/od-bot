@@ -153,6 +153,8 @@ async def handle_data(request: web.Request) -> web.Response:
         margin_match = margin_by_key.get(key)
         if margin_match:
             row["Наценка"] = margin_match.get("margin_pct")
+            row["НаценкаКухня"] = margin_match.get("margin_kitchen_pct")
+            row["НаценкаБар"] = margin_match.get("margin_bar_pct")
 
     plan_fact["name"] = name
     plan_fact["checks_available"] = checks is not None
