@@ -32,6 +32,7 @@ DEV_MODE = os.environ.get("CHECKLIST_DEV_MODE", "") == "1"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HTML_PATH = os.path.join(HERE, "webapp", "dashboard.html")
+LOGO_PATH = os.path.join(HERE, "webapp", "logo.svg")
 
 
 def _parse_pairs(raw: str) -> dict[int, str]:
@@ -79,6 +80,15 @@ async def handle_index(request: web.Request) -> web.Response:
             text=f.read(),
             content_type="text/html",
             headers={"Cache-Control": "no-store, must-revalidate"},
+        )
+
+
+async def handle_logo(request: web.Request) -> web.Response:
+    with open(LOGO_PATH, encoding="utf-8") as f:
+        return web.Response(
+            text=f.read(),
+            content_type="image/svg+xml",
+            headers={"Cache-Control": "public, max-age=86400"},
         )
 
 
@@ -133,3 +143,4 @@ def register_dashboard_routes(app: web.Application):
     app.router.add_get("/dashboard", handle_index)
     app.router.add_get("/dashboard/", handle_index)
     app.router.add_get("/api/dashboard/data", handle_data)
+    app.router.add_get("/logo.svg", handle_logo)
