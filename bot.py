@@ -49,7 +49,9 @@ IIKO_PROXY_URL     = os.environ.get("IIKO_PROXY_URL", "")
 # Пустые строки и строки, начинающиеся с #, игнорируются.
 def _parse_team_members(raw: str) -> dict[int, dict]:
     members: dict[int, dict] = {}
-    for line in (raw or "").splitlines():
+    # Разделитель людей — перенос строки или «|» (удобно, если панель хостинга
+    # не даёт вставить многострочное значение).
+    for line in (raw or "").replace("|", "\n").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
