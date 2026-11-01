@@ -45,4 +45,5 @@ def webapp_base_url() -> str:
     domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
     if domain:
         return f"https://{domain}"
-    return ""
+    # Адрес приложения на Timeweb App Platform
+    return "https://florianmarichal612-star-od-bot-4104.twc1.net"
