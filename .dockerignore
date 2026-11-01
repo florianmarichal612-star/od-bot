@@ -1,0 +1,6 @@
+.git
+__pycache__
+*.pyc
+_dev_checklist.db
+*.db
+.env
