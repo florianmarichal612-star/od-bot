@@ -74,6 +74,8 @@ def _parse_team_members(raw: str) -> dict[int, dict]:
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
+# httpx пишет в лог полный URL запроса, а в нём токен бота — глушим
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 TEAM_MEMBERS: dict[int, dict] = _parse_team_members(os.environ.get("TEAM_MEMBERS", ""))
 _with_bitrix = sum(1 for m in TEAM_MEMBERS.values() if m.get("bitrix_id"))
