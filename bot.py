@@ -11,6 +11,7 @@ import httpx
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
     ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, WebAppInfo,
+    MenuButtonDefault,
 )
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
@@ -862,6 +863,35 @@ async def cmd_generate_alias(update: Update, ctx):
     await action_generate(update, ctx)
 
 
+
+async def refresh_buttons(app):
+    """После переезда хостинга: сбросить кнопку «Меню» (могла вести на старый
+    адрес) и один раз прислать ОД свежую клавиатуру. Отметка о рассылке
+    хранится рядом с базой чек-листов, поэтому сообщение не повторяется
+    при каждом перезапуске."""
+    try:
+        await app.bot.set_chat_menu_button(menu_button=MenuButtonDefault())
+    except Exception as e:
+        log.warning(f"Не удалось сбросить кнопку меню: {e}")
+    if not OD_CHAT_ID:
+        return
+    marker_dir = os.path.dirname(os.environ.get("CHECKLIST_DB_PATH", "checklist.db")) or "."
+    marker = os.path.join(marker_dir, ".buttons_refreshed_v1")
+    if os.path.exists(marker):
+        return
+    try:
+        await app.bot.send_message(
+            OD_CHAT_ID,
+            "🔄 Бот переехал на новый сервер. Кнопки обновлены — "
+            "старые кнопки в прошлых сообщениях больше не работают, "
+            "пользуйся клавиатурой ниже.",
+            reply_markup=OD_KEYBOARD,
+        )
+        os.makedirs(marker_dir, exist_ok=True)
+        open(marker, "w").close()
+    except Exception as e:
+        log.warning(f"Не удалось отправить обновлённую клавиатуру: {e}")
+
 async def async_main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
@@ -897,6 +927,7 @@ async def async_main():
         await app.start()
         await app.updater.start_polling(drop_pending_updates=True)
         log.info("Бот запущен")
+        await refresh_buttons(app)
         try:
             await asyncio.Event().wait()
         finally:
